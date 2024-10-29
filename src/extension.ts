@@ -1,5 +1,3 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from "vscode";
 import { getRandomPokemon } from "./pkmnAPI";
 
@@ -19,6 +17,7 @@ interface PomodoroState {
   currentPhase: "work" | "break";
   currentPokemon?: {
     name: string;
+    spriteUrl: string;
     message: vscode.MessageItem | undefined;
   };
 }
@@ -37,14 +36,22 @@ const state: PomodoroState = {
 let currentPokemonMessage: vscode.MessageItem | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
-  // Command to activate Pomodoro Timer
+  const pokemonViewProvider = new PokemonViewProvider(context.extensionUri);
+
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      "pokemonView",
+      pokemonViewProvider
+    )
+  );
+
   const startPomodoro = vscode.commands.registerCommand(
     "pkmn-tmtred.startPomodoro",
     () => {
       if (!state.isRunning) {
         state.isRunning = true;
         vscode.window.showInformationMessage(
-          "Pomodoro Timer started! Let's focus for 25 minutes!"
+          "Pomodoro Timer started! Let's focus!"
         );
         startWorkSession();
       } else {
@@ -55,7 +62,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  // Command to stop Pomodoro Timer
   const stopPomodoro = vscode.commands.registerCommand(
     "pkmn-tmtred.stopPomodoro",
     () => {
@@ -69,8 +75,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 function startWorkSession() {
   state.currentPhase = "work";
-  state.pomodoroCount++;
-  hideCurrentPokemonMessage(); // Hide previous Pokémon messages
+  state.pomodoroCount++; // Hide previous Pokémon messages
   const duration = TEST_MODE ? 5 : WORK_DURATION; // 1 minute in test mode
   startTimer(duration);
 
@@ -85,8 +90,6 @@ async function startShortBreak() {
   state.currentPhase = "break";
   state.shortBreakCount++;
 
-  hideCurrentPokemonMessage();
-
   // Spawn Pokémon in short breaks
   spawnPokemonForBreak();
   vscode.window.showInformationMessage(
@@ -100,8 +103,6 @@ async function startShortBreak() {
 async function startLongBreak() {
   state.currentPhase = "break";
   state.longBreakCount++;
-
-  hideCurrentPokemonMessage();
 
   vscode.window.showInformationMessage(
     `Excellent work! You've completed 4 Pomodoros. Time for a long break (${
@@ -157,11 +158,9 @@ function stopTimer() {
   state.shortBreakCount = 0;
   state.currentPhase = "work";
   state.currentPokemon = undefined;
-  hideCurrentPokemonMessage();
   vscode.window.setStatusBarMessage("");
 }
 
-// Aggiungi questa funzione per resettare i contatori
 function resetCounters() {
   state.pomodoroCount = 0;
   state.shortBreakCount = 0;
@@ -202,13 +201,14 @@ function updateStatusBar(timeLeft: number) {
 
 async function spawnPokemonForBreak() {
   try {
-    const pokemonName = await getRandomPokemon();
+    const { name, sprite: spriteUrl } = await getRandomPokemon();
+    state.currentPokemon = { name, spriteUrl, message: undefined };
+    vscode.commands.executeCommand("pokemonView.refresh");
+
+    // Formatting Pokémon name
     const formattedName =
-      pokemonName.charAt(0).toUpperCase() + pokemonName.slice(1);
-    state.currentPokemon = {
-      name: formattedName,
-      message: undefined,
-    };
+      state.currentPokemon.name.charAt(0).toUpperCase() +
+      state.currentPokemon.name.slice(1);
 
     // Create a new message
     currentPokemonMessage = await vscode.window.showInformationMessage(
@@ -219,52 +219,65 @@ async function spawnPokemonForBreak() {
       { title: "Catch" }, // MessageItem for catching the Pokémon
       { title: "Run" } // MessageItem for running away
     );
-
-    // If the user interacts with the message
-    if (currentPokemonMessage?.title === "Catch") {
-      handlePokemonCatch(formattedName);
-    } else if (currentPokemonMessage?.title === "Run") {
-      vscode.window.showInformationMessage(
-        `Got away safely! Continue your break!`,
-        "OK"
-      );
-    } else {
-      console.error("Unexpected message interaction");
-    }
   } catch (error) {
-    vscode.window.showErrorMessage(
-      "Failed to fetch a Pokémon. Don't worry, take your break anyway!"
-    );
-  }
-
-  // TODO: Function to show animated sprites and catch it
-}
-
-function hideCurrentPokemonMessage() {
-  if (currentPokemonMessage) {
-    // Hide current message (if exist)
-    currentPokemonMessage = undefined;
+    vscode.window.showErrorMessage("Failed to fetch a Pokémon.");
   }
 }
 
-function handlePokemonCatch(pokemonName: string) {
-  const catchSuccess = Math.random() > 0; // Set the chance to capture the Pokémon. Is 0 for test
+// Webview Provider for Pokémon View
+class PokemonViewProvider implements vscode.WebviewViewProvider {
+  private _view?: vscode.WebviewView;
 
-  if (catchSuccess) {
-    vscode.window.showInformationMessage(
-      `🎉 Gotcha! ${pokemonName} was caught! Continue your break!`,
-      "OK"
-    );
-    // TODO: Add the Pokémon to the user's collection
-  } else {
-    vscode.window.showInformationMessage(
-      `Oh no! ${pokemonName} broke free! Maybe try again during this break!`,
-      "OK"
-    );
+  constructor(private readonly extensionUri: vscode.Uri) {}
+
+  resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    _context: vscode.WebviewViewResolveContext,
+    _token: vscode.CancellationToken
+  ) {
+    this._view = webviewView;
+    webviewView.webview.options = { enableScripts: true };
+    this.updateWebviewContent();
+  }
+
+  public refresh() {
+    if (this._view) {
+      this.updateWebviewContent();
+    }
+  }
+
+  private updateWebviewContent() {
+    const pokemon = state.currentPokemon;
+    const spriteHtml = pokemon
+      ? `<h1>Wild ${pokemon.name} appeared!</h1><img id="pokemon-sprite" src="${pokemon.spriteUrl}" style="position:absolute; width: 80px;">`
+      : `<h1>No Pokémon here!</h1>`;
+
+    this._view!.webview.html = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <style>
+          body { position: relative; overflow: hidden; width: 100%; height: 100%; }
+          #pokemon-sprite { animation: moveRandomly 3s infinite; }
+        </style>
+      </head>
+      <body>${spriteHtml}</body>
+      <script>
+        const pokemonSprite = document.getElementById('pokemon-sprite');
+
+        function moveRandomly() {
+          const x = Math.random() * (window.innerWidth - 80);
+          const y = Math.random() * (window.innerHeight - 80);
+          pokemonSprite.style.transform = \`translate(\${x}px, \${y}px)\`;
+        }
+
+        setInterval(moveRandomly, 1000);
+      </script>
+      </html>
+    `;
   }
 }
 
-// This method is called when your extension is deactivated
 export function deactivate() {
   stopTimer();
 }

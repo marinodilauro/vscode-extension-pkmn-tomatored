@@ -2,10 +2,15 @@ import fetch from "node-fetch";
 
 interface Pokemon {
   name: string;
-  // Aggiungi altre proprietà se necessario
+  sprites: {
+    front_default: string;
+  };
 }
 
-export async function getRandomPokemon(): Promise<string> {
+export async function getRandomPokemon(): Promise<{
+  name: string;
+  sprite: string;
+}> {
   const randomId = Math.floor(Math.random() * 898) + 1; // Pokémon ID
   const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${randomId}`);
 
@@ -14,5 +19,8 @@ export async function getRandomPokemon(): Promise<string> {
   }
 
   const pokemonData = (await response.json()) as Pokemon;
-  return pokemonData.name; // Return Pokémon name
+  return {
+    name: pokemonData.name, // Return Pokémon name
+    sprite: pokemonData.sprites.front_default, // Return Pokémon sprite URL
+  };
 }
