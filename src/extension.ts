@@ -134,6 +134,11 @@ function startTimer(duration: number) {
           startShortBreak(); // Start short break
         }
       } else {
+        // If it's break time, check if it's a long break
+        if (state.currentPhase === "break" && state.longBreakCount > 0) {
+          // Reset pomodoro and short breaks counters
+          resetCounters();
+        }
         startWorkSession(); // Start work session
       }
     } else {
@@ -154,6 +159,12 @@ function stopTimer() {
   state.currentPokemon = undefined;
   hideCurrentPokemonMessage();
   vscode.window.setStatusBarMessage("");
+}
+
+// Aggiungi questa funzione per resettare i contatori
+function resetCounters() {
+  state.pomodoroCount = 0;
+  state.shortBreakCount = 0;
 }
 
 function updateStatusBar(timeLeft: number) {
