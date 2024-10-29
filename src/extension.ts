@@ -25,10 +25,23 @@ function startTimer(duration: number) {
       vscode.window.showInformationMessage(
         "Time for a break! A Pokémon is appearing..."
       );
+      spawnPokemon(); // Spawn random Pokémon
     } else {
       timeLeft--;
     }
   }, 1000); // Update the timer every second
+}
+
+function spawnPokemon() {
+  // Function to spawn a random Pokémon
+  const pokemonList = ["Bulbasaur", "Charmander", "Squirtle"]; // Test Pokémon array
+  const randomPokemon =
+    pokemonList[Math.floor(Math.random() * pokemonList.length)];
+  vscode.window.showInformationMessage(
+    `A wild ${randomPokemon} appeared! Click to catch it!`
+  );
+
+  // TODO: Function to show animated sprites and catch it
 }
 
 // This method is called when your extension is deactivated
