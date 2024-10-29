@@ -23,6 +23,7 @@
     "views": {
       "explorer": [
         {
+          "type": "webview",
           "id": "pokemonView",
           "name": "Pokémon TomatoRed"
         }

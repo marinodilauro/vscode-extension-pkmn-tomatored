@@ -46,7 +46,11 @@ export class PokemonViewProvider implements vscode.WebviewViewProvider {
     );
     const pokemon = state.currentPokemon;
     const spriteHtml = pokemon
-      ? `<h1>Wild ${pokemon.name} appeared!</h1><img src="${pokemon.spriteUrl}" id="pokemonSprite" style="max-width: 100px; position: relative;">`
+      ? `<h1>Wild ${
+          pokemon.name.charAt(0).toUpperCase() + pokemon?.name.slice(1)
+        } appeared!</h1><img src="${
+          pokemon.spriteUrl
+        }" id="pokemonSprite" style="max-width: 100px; position: relative;">`
       : `<h1>No Pokémon here!</h1>`;
 
     return `
