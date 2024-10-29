@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { getRandomPokemon } from "./pkmnAPI";
+import { PokemonViewProvider } from "./pokemonViewProvider";
 
 // Timer constants
 const WORK_DURATION = 25 * 60;
@@ -22,7 +23,7 @@ interface PomodoroState {
   };
 }
 
-const state: PomodoroState = {
+export const state: PomodoroState = {
   isRunning: false,
   currentInterval: undefined,
   pomodoroCount: 0,
@@ -36,14 +37,20 @@ const state: PomodoroState = {
 let currentPokemonMessage: vscode.MessageItem | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+  console.log("activate function called");
+
   const pokemonViewProvider = new PokemonViewProvider(context.extensionUri);
 
+  console.log("Registering webview view provider");
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
-      "pokemonView",
+      PokemonViewProvider.viewType,
       pokemonViewProvider
     )
   );
+
+  console.log("Forcing initial update");
+  pokemonViewProvider.refresh();
 
   const startPomodoro = vscode.commands.registerCommand(
     "pkmn-tmtred.startPomodoro",
@@ -53,7 +60,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           "Pomodoro Timer started! Let's focus!"
         );
-        startWorkSession();
+        startWorkSession(pokemonViewProvider);
       } else {
         vscode.window.showInformationMessage(
           "Pomodoro Timer is already running!"
@@ -73,11 +80,11 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(startPomodoro, stopPomodoro);
 }
 
-function startWorkSession() {
+function startWorkSession(pokemonViewProvider: PokemonViewProvider) {
   state.currentPhase = "work";
   state.pomodoroCount++; // Hide previous Pokémon messages
   const duration = TEST_MODE ? 5 : WORK_DURATION; // 1 minute in test mode
-  startTimer(duration);
+  startTimer(duration, pokemonViewProvider);
 
   vscode.window.showInformationMessage(
     `Starting work session ${
@@ -86,21 +93,21 @@ function startWorkSession() {
   );
 }
 
-async function startShortBreak() {
+async function startShortBreak(pokemonViewProvider: PokemonViewProvider) {
   state.currentPhase = "break";
   state.shortBreakCount++;
 
   // Spawn Pokémon in short breaks
-  spawnPokemonForBreak();
+  spawnPokemonForBreak(pokemonViewProvider);
   vscode.window.showInformationMessage(
     `Time for a short break (${TEST_MODE ? "10 seconds" : "5 minutes"})!`
   );
 
   const duration = TEST_MODE ? 10 : SHORT_BREAK;
-  startTimer(duration);
+  startTimer(duration, pokemonViewProvider);
 }
 
-async function startLongBreak() {
+async function startLongBreak(pokemonViewProvider: PokemonViewProvider) {
   state.currentPhase = "break";
   state.longBreakCount++;
 
@@ -111,10 +118,13 @@ async function startLongBreak() {
   );
 
   const duration = TEST_MODE ? 15 : LONG_BREAK;
-  startTimer(duration);
+  startTimer(duration, pokemonViewProvider);
 }
 
-function startTimer(duration: number) {
+function startTimer(
+  duration: number,
+  pokemonViewProvider: PokemonViewProvider
+) {
   let timeLeft = duration;
 
   // Update status bar every seconds
@@ -130,9 +140,9 @@ function startTimer(duration: number) {
         // Check if long break is needed
         if (state.pomodoroCount === 4) {
           // Check if it's 4th pomodoro
-          startLongBreak(); // Start long break
+          startLongBreak(pokemonViewProvider); // Start long break
         } else {
-          startShortBreak(); // Start short break
+          startShortBreak(pokemonViewProvider); // Start short break
         }
       } else {
         // If it's break time, check if it's a long break
@@ -140,7 +150,7 @@ function startTimer(duration: number) {
           // Reset pomodoro and short breaks counters
           resetCounters();
         }
-        startWorkSession(); // Start work session
+        startWorkSession(pokemonViewProvider); // Start work session
       }
     } else {
       updateStatusBar(timeLeft);
@@ -199,11 +209,14 @@ function updateStatusBar(timeLeft: number) {
   vscode.window.setStatusBarMessage(statusMessage);
 }
 
-async function spawnPokemonForBreak() {
+export async function spawnPokemonForBreak(
+  pokemonViewProvider: PokemonViewProvider
+) {
   try {
     const { name, sprite: spriteUrl } = await getRandomPokemon();
+    console.log(`Spawned Pokémon: ${name}, Sprite URL: ${spriteUrl}`);
     state.currentPokemon = { name, spriteUrl, message: undefined };
-    vscode.commands.executeCommand("pokemonView.refresh");
+    pokemonViewProvider.refresh();
 
     // Formatting Pokémon name
     const formattedName =
@@ -221,60 +234,6 @@ async function spawnPokemonForBreak() {
     );
   } catch (error) {
     vscode.window.showErrorMessage("Failed to fetch a Pokémon.");
-  }
-}
-
-// Webview Provider for Pokémon View
-class PokemonViewProvider implements vscode.WebviewViewProvider {
-  private _view?: vscode.WebviewView;
-
-  constructor(private readonly extensionUri: vscode.Uri) {}
-
-  resolveWebviewView(
-    webviewView: vscode.WebviewView,
-    _context: vscode.WebviewViewResolveContext,
-    _token: vscode.CancellationToken
-  ) {
-    this._view = webviewView;
-    webviewView.webview.options = { enableScripts: true };
-    this.updateWebviewContent();
-  }
-
-  public refresh() {
-    if (this._view) {
-      this.updateWebviewContent();
-    }
-  }
-
-  private updateWebviewContent() {
-    const pokemon = state.currentPokemon;
-    const spriteHtml = pokemon
-      ? `<h1>Wild ${pokemon.name} appeared!</h1><img id="pokemon-sprite" src="${pokemon.spriteUrl}" style="position:absolute; width: 80px;">`
-      : `<h1>No Pokémon here!</h1>`;
-
-    this._view!.webview.html = `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <style>
-          body { position: relative; overflow: hidden; width: 100%; height: 100%; }
-          #pokemon-sprite { animation: moveRandomly 3s infinite; }
-        </style>
-      </head>
-      <body>${spriteHtml}</body>
-      <script>
-        const pokemonSprite = document.getElementById('pokemon-sprite');
-
-        function moveRandomly() {
-          const x = Math.random() * (window.innerWidth - 80);
-          const y = Math.random() * (window.innerHeight - 80);
-          pokemonSprite.style.transform = \`translate(\${x}px, \${y}px)\`;
-        }
-
-        setInterval(moveRandomly, 1000);
-      </script>
-      </html>
-    `;
   }
 }
 
