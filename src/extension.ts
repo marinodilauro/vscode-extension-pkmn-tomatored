@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { getRandomPokemon } from "./pkmnAPI";
 import { PokemonViewProvider } from "./pokemonViewProvider";
+import { Pokemon } from "./pkmnAPI";
 
 // Timer constants
 const WORK_DURATION = 25 * 60;
@@ -16,11 +17,8 @@ interface PomodoroState {
   shortBreakCount: number;
   longBreakCount: number;
   currentPhase: "work" | "break";
-  currentPokemon?: {
-    name: string;
-    spriteUrl: string;
-    message: vscode.MessageItem | undefined;
-  };
+  currentPokemon?: Pokemon;
+  capturedPokemons: Pokemon[];
 }
 
 export const state: PomodoroState = {
@@ -31,6 +29,7 @@ export const state: PomodoroState = {
   longBreakCount: 0,
   currentPhase: "work",
   currentPokemon: undefined,
+  capturedPokemons: [],
 };
 
 // Reference to the current message
@@ -78,6 +77,93 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(startPomodoro, stopPomodoro);
+
+  // View commands
+  context.subscriptions.push(
+    // Command to refresh the view
+    vscode.commands.registerCommand("pkmn-tmtred.refresh", () => {
+      vscode.window.showInformationMessage("Refreshing Pokémon...");
+    }),
+    //Command to catch the Pokémon
+    vscode.commands.registerCommand("pkmn-tmtred.capture", () => {
+      vscode.window.showInformationMessage("Captured Pokémon!");
+    }),
+    vscode.commands.registerCommand(
+      "pkmn-tmtred.showCapturedPokemons",
+      showCapturedPokemons
+    )
+  );
+}
+
+// Command to refresh the view and spawn another Pokémon
+async function refreshPokemon() {
+  try {
+    const { name, spriteUrl } = await getRandomPokemon();
+    state.currentPokemon = {
+      name,
+      sprites: { front_default: spriteUrl },
+      message: undefined,
+    };
+    vscode.window.showInformationMessage(`A wild ${name} appeared!`);
+    vscode.commands.executeCommand("pokemonView.refresh"); // Update the view with the new Pokémon
+  } catch (error) {
+    vscode.window.showErrorMessage("Failed to fetch a Pokémon.");
+  }
+}
+
+// //Command to catch the Pokémon
+function capturePokemon() {
+  const pokemon = state.currentPokemon;
+  if (pokemon) {
+    state.capturedPokemons.push(pokemon);
+    vscode.window.showInformationMessage(`You captured ${pokemon.name}!`);
+    state.currentPokemon = undefined; // Remove current Pokémon from the view
+    vscode.commands.executeCommand("pokemonView.refresh"); // Refresh the view
+  } else {
+    vscode.window.showInformationMessage("No Pokémon to capture!");
+  }
+}
+
+// Command to show captured Pokémons
+function showCapturedPokemons() {
+  const panel = vscode.window.createWebviewPanel(
+    "capturedPokemons", // Identificatore univoco per la webview
+    "Captured Pokémon", // Titolo della webview
+    vscode.ViewColumn.One, // Colonna in cui aprire la webview
+    {
+      enableScripts: true, // Abilita JavaScript nella webview
+    }
+  );
+
+  // Generate content for the Webview
+  const capturedPokemonsHtml = state.capturedPokemons
+    .map(
+      (pokemon) =>
+        `<div style="display: flex; align-items: center; margin-bottom: 10px;">
+           <img src="${pokemon.sprites.front_default}" style="width: 50px; height: 50px; margin-right: 10px;">
+           <span>${pokemon.name}</span>
+         </div>`
+    )
+    .join("");
+
+  panel.webview.html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        h1 { text-align: center; }
+        .pokemon-list { display: flex; flex-direction: column; align-items: flex-start; }
+      </style>
+    </head>
+    <body>
+      <h1>Captured Pokémon</h1>
+      <div class="pokemon-list">
+        ${capturedPokemonsHtml || "<p>No Pokémon captured yet!</p>"}
+      </div>
+    </body>
+    </html>
+  `;
 }
 
 function startWorkSession(pokemonViewProvider: PokemonViewProvider) {
@@ -213,15 +299,31 @@ export async function spawnPokemonForBreak(
   pokemonViewProvider: PokemonViewProvider
 ) {
   try {
-    const { name, sprite: spriteUrl } = await getRandomPokemon();
+    const { name, spriteUrl } = await getRandomPokemon();
     console.log(`Spawned Pokémon: ${name}, Sprite URL: ${spriteUrl}`);
-    state.currentPokemon = { name, spriteUrl, message: undefined };
+    state.currentPokemon = {
+      name,
+      sprites: { front_default: spriteUrl },
+      message: undefined,
+    };
+    pokemonViewProvider.refresh();
+
+    // Bring the Pokemon view to front
+    await vscode.commands.executeCommand(
+      "workbench.view.extension.pokemon-tomatoRed-container"
+    );
+
+    // If we have access to the view through the provider, reveal it
+    if (pokemonViewProvider._view) {
+      pokemonViewProvider._view.show(true); // true means preserve focus
+    }
+
     pokemonViewProvider.refresh();
 
     // Formatting Pokémon name
     const formattedName =
-      state.currentPokemon.name.charAt(0).toUpperCase() +
-      state.currentPokemon.name.slice(1);
+      state.currentPokemon!.name.charAt(0).toUpperCase() +
+      state.currentPokemon!.name.slice(1);
 
     // Create a new message
     currentPokemonMessage = await vscode.window.showInformationMessage(

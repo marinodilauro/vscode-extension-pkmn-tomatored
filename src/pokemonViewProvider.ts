@@ -4,7 +4,7 @@ import { state, spawnPokemonForBreak } from "./extension";
 export class PokemonViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "pokemonView";
 
-  private _view?: vscode.WebviewView;
+  public _view?: vscode.WebviewView;
 
   constructor(private readonly _extensionUri: vscode.Uri) {
     console.log("PokemonViewProvider constructor called");
@@ -15,13 +15,19 @@ export class PokemonViewProvider implements vscode.WebviewViewProvider {
     _context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken
   ): void {
-    console.log("resolveWebviewView called");
-    console.log("webviewView:", webviewView);
-    console.log("webviewView.visible:", webviewView.visible);
-    console.log("_context:", _context);
-    console.log("_token:", _token);
+    // console.log("resolveWebviewView called");
+    // console.log("webviewView:", webviewView);
+    // console.log("webviewView.visible:", webviewView.visible);
+    // console.log("_context:", _context);
+    // console.log("_token:", _token);
 
     this._view = webviewView;
+
+    this._view.title = "POKEMON TOMATORED";
+    this._view.description = "Track captured Pokémon and take breaks";
+
+    this._view!.webview.options = { enableScripts: true };
+    this._view!.title = "Pokémon TomatoRed";
 
     webviewView.webview.options = {
       // Enable scripts in the webview
@@ -49,7 +55,7 @@ export class PokemonViewProvider implements vscode.WebviewViewProvider {
       ? `<h1>Wild ${
           pokemon.name.charAt(0).toUpperCase() + pokemon?.name.slice(1)
         } appeared!</h1><img src="${
-          pokemon.spriteUrl
+          pokemon.sprites.front_default
         }" id="pokemonSprite" style="max-width: 100px; position: relative;">`
       : `<h1>No Pokémon here!</h1>`;
 

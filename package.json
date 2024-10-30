@@ -18,14 +18,60 @@
       {
         "command": "pkmn-tmtred.stopPomodoro",
         "title": "Stop Pokémon TomatoRed Timer"
+      },
+      {
+        "command": "pkmn-tmtred.refresh",
+        "title": "Refresh Pokémon",
+        "icon": "$(refresh)",
+        "category": "Pokemon TomatoRed"
+      },
+      {
+        "command": "pkmn-tmtred.capture",
+        "title": "Capture Pokémon",
+        "icon": "src/resources/pokeball_color.svg",
+        "category": "Pokemon TomatoRed"
+      },
+      {
+        "command": "pkmn-tmtred.showCapturedPokemons",
+        "title": "Show Captured Pokémon",
+        "category": "Pokemon TomatoRed",
+        "icon": "$(open-editors-view-icon)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pokemon-tomatoRed-container",
+          "title": "POKEMON TOMATORED",
+          "icon": "src/resources/pokeball.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "pokemon-tomatoRed-container": [
         {
           "type": "webview",
           "id": "pokemonView",
-          "name": "Pokémon TomatoRed"
+          "name": "POKEMON TOMATORED"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "pkmn-tmtred.refresh",
+          "when": "view == pokemonView",
+          "group": "navigation"
+        },
+        {
+          "command": "pkmn-tmtred.capture",
+          "when": "view == pokemonView",
+          "group": "navigation"
+        },
+        {
+          "command": "pkmn-tmtred.showCapturedPokemons",
+          "when": "view == pokemonView",
+          "group": "navigation"
         }
       ]
     }
