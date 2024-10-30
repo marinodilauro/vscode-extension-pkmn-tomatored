@@ -20,6 +20,8 @@ interface PomodoroState {
   currentPokemon?: Pokemon;
   capturedPokemons: Pokemon[];
   justCaptured?: string;
+  timeLeft: number;
+  pokemonRunAway: boolean;
 }
 
 export const state: PomodoroState = {
@@ -32,6 +34,8 @@ export const state: PomodoroState = {
   currentPokemon: undefined,
   capturedPokemons: [],
   justCaptured: undefined,
+  timeLeft: 0,
+  pokemonRunAway: false,
 };
 
 // Reference to the current message
@@ -62,7 +66,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           "Pomodoro Timer started! Let's focus!"
         );
-        startWorkSession(pokemonViewProvider);
+        startWorkSession();
       } else {
         vscode.window.showInformationMessage(
           "Pomodoro Timer is already running!"
@@ -160,11 +164,11 @@ function capturePokemon() {
 // Command to show captured Pokémons
 function showCapturedPokemons() {
   const panel = vscode.window.createWebviewPanel(
-    "capturedPokemons", // Identificatore univoco per la webview
-    "Captured Pokémon", // Titolo della webview
-    vscode.ViewColumn.One, // Colonna in cui aprire la webview
+    "capturedPokemons",
+    "Captured Pokémon",
+    vscode.ViewColumn.One,
     {
-      enableScripts: true, // Abilita JavaScript nella webview
+      enableScripts: true,
     }
   );
 
@@ -173,8 +177,10 @@ function showCapturedPokemons() {
     .map(
       (pokemon) =>
         `<div style="display: flex; align-items: center; margin-bottom: 10px;">
-           <img src="${pokemon.sprites.front_default}" style="width: 50px; height: 50px; margin-right: 10px;">
-           <span>${pokemon.name}</span>
+           <img src="${
+             pokemon.sprites.front_default
+           }" style="width: 50px; height: 50px; margin-right: 10px;">
+           <span>${formatPokemonName(pokemon.name)}</span>
          </div>`
     )
     .join("");
@@ -184,7 +190,6 @@ function showCapturedPokemons() {
     <html lang="en">
     <head>
       <style>
-        body { font-family: Arial, sans-serif; padding: 20px; }
         h1 { text-align: center; }
         .pokemon-list { display: flex; flex-direction: column; align-items: flex-start; }
       </style>
@@ -192,18 +197,18 @@ function showCapturedPokemons() {
     <body>
       <h1>Captured Pokémon</h1>
       <div class="pokemon-list">
-        ${capturedPokemonsHtml || "<p>No Pokémon captured yet!</p>"}
+        ${capturedPokemonsHtml || "<h2>No Pokémon captured yet!</h2>"}
       </div>
     </body>
     </html>
   `;
 }
 
-function startWorkSession(pokemonViewProvider: PokemonViewProvider) {
+function startWorkSession() {
   state.currentPhase = "work";
   state.pomodoroCount++; // Hide previous Pokémon messages
   const duration = TEST_MODE ? 5 : WORK_DURATION; // 1 minute in test mode
-  startTimer(duration, pokemonViewProvider);
+  startTimer(duration);
 
   vscode.window.showInformationMessage(
     `Starting work session ${
@@ -212,21 +217,21 @@ function startWorkSession(pokemonViewProvider: PokemonViewProvider) {
   );
 }
 
-async function startShortBreak(pokemonViewProvider: PokemonViewProvider) {
+async function startShortBreak() {
   state.currentPhase = "break";
   state.shortBreakCount++;
 
   // Spawn Pokémon in short breaks
-  spawnPokemonForBreak(pokemonViewProvider);
+  spawnPokemonForBreak();
   vscode.window.showInformationMessage(
     `Time for a short break (${TEST_MODE ? "10 seconds" : "5 minutes"})!`
   );
 
   const duration = TEST_MODE ? 10 : SHORT_BREAK;
-  startTimer(duration, pokemonViewProvider);
+  startTimer(duration);
 }
 
-async function startLongBreak(pokemonViewProvider: PokemonViewProvider) {
+async function startLongBreak() {
   state.currentPhase = "break";
   state.longBreakCount++;
 
@@ -237,20 +242,19 @@ async function startLongBreak(pokemonViewProvider: PokemonViewProvider) {
   );
 
   const duration = TEST_MODE ? 15 : LONG_BREAK;
-  startTimer(duration, pokemonViewProvider);
+  startTimer(duration);
 }
 
-function startTimer(
-  duration: number,
-  pokemonViewProvider: PokemonViewProvider
-) {
+function startTimer(duration: number) {
   let timeLeft = duration;
+  state.timeLeft = timeLeft;
 
   // Update status bar every seconds
   updateStatusBar(timeLeft);
 
   state.currentInterval = setInterval(() => {
     timeLeft--;
+    state.timeLeft = timeLeft;
 
     if (timeLeft <= 0) {
       clearInterval(state.currentInterval);
@@ -259,9 +263,11 @@ function startTimer(
         // Check if long break is needed
         if (state.pomodoroCount === 4) {
           // Check if it's 4th pomodoro
-          startLongBreak(pokemonViewProvider); // Start long break
+          startLongBreak(); // Start long break
         } else {
-          startShortBreak(pokemonViewProvider); // Start short break
+          const runAwayContent = getCurrentViewContent();
+          state.pokemonRunAway = false;
+          startShortBreak(); // Start short break
         }
       } else {
         // If it's break time, check if it's a long break
@@ -269,12 +275,116 @@ function startTimer(
           // Reset pomodoro and short breaks counters
           resetCounters();
         }
-        startWorkSession(pokemonViewProvider); // Start work session
+        // If we're ending a short break and there was a Pokemon
+        if (state.currentPhase === "break" && state.currentPokemon) {
+          state.pokemonRunAway = true;
+          state.currentPokemon = undefined;
+          vscode.window.showInformationMessage("Oh no! The Pokémon ran away!");
+        }
+        startWorkSession(); // Start work session
       }
     } else {
       updateStatusBar(timeLeft);
+      if (state.pokemonRunAway) {
+        pokemonViewProvider.refresh(); // Update view to show current timer
+      }
     }
   }, 1000);
+}
+
+function formatTimeRemaining(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+}
+
+function formatPokemonName(pokemonName: string): string {
+  const formattedName =
+    pokemonName.charAt(0).toUpperCase() + pokemonName.slice(1);
+
+  return formattedName;
+}
+
+// Get the current view content
+export function getCurrentViewContent(): string {
+  let content;
+
+  // If it's a short break and there is a Pokémon, show it
+  if (state.currentPhase === "break" && state.currentPokemon) {
+    content = `
+      <div class="wild-pokemon">
+        <h1>Wild ${formatPokemonName(state.currentPokemon.name)} appeared!</h1>
+        <img src="${
+          state.currentPokemon.sprites.front_default
+        }" alt="${formatPokemonName(state.currentPokemon.name)}">
+      </div>
+    `;
+  } else if (state.pokemonRunAway && state.currentPhase === "work") {
+    // If the Pokémon ran away and it's work session, show the message with the timer
+    content = `
+      <div style="text-align: center; padding: 20px;">
+        <h2>Oh no! The Pokémon ran away!</h2>
+        <p>Retry in ${formatTimeRemaining(state.timeLeft)}!</p>
+      </div>
+    `;
+  } else if (state.justCaptured) {
+    // If the Pokémon ran away and it's work session, show the message with the timer
+    content = `
+      <div class="capture-success">
+           <h1>Congratulations!</h1>
+           <h2>You captured ${formatPokemonName(state.justCaptured)}!</h2>
+      </div>`;
+  } else {
+    // Default state (no Pokémon)
+    content = `
+    <div class="no-pokemon">
+      <h2>Focus on your work!</h2>
+      <p>A wild Pokémon will appear during your break.</p>
+    </div>
+  `;
+  }
+
+  return `
+       <!DOCTYPE html>
+       <html lang="en">
+       <head>
+         <style>
+           body {
+             display: flex;
+             flex-direction: column;
+             justify-content: center;
+             align-items: center;
+             height: 100vh;
+             margin: 0;
+             padding: 20px;
+             box-sizing: border-box;
+             text-align: center;
+             font-family: var(--vscode-font-family);
+             color: var(--vscode-foreground);
+           }
+           .wild-pokemon img {
+             animation: move 0.5s infinite ;
+             width: 140px;
+             height: 140px;
+             position: relative;
+           }
+           .capture-success {
+             animation: fadeIn 0.5s ease-in;
+           }
+           @keyframes move {
+             0% { transform: translate(0, 0); }
+             100% { transform: translate(${Math.random() * 20 - 10}px, ${
+    Math.random() * 20 - 10
+  }px); }
+           }
+
+           h1 { margin-bottom: 10px; }
+           h2 { margin-top: 0; }
+         </style>
+       </head>
+       <body>${content}</body>
+       </html>
+     `;
 }
 
 function stopTimer() {
@@ -328,9 +438,7 @@ function updateStatusBar(timeLeft: number) {
   vscode.window.setStatusBarMessage(statusMessage);
 }
 
-export async function spawnPokemonForBreak(
-  pokemonViewProvider: PokemonViewProvider
-) {
+export async function spawnPokemonForBreak() {
   try {
     const { name, spriteUrl } = await getRandomPokemon();
     console.log(`Spawned Pokémon: ${name}, Sprite URL: ${spriteUrl}`);
@@ -339,6 +447,7 @@ export async function spawnPokemonForBreak(
       sprites: { front_default: spriteUrl },
       message: undefined,
     };
+    state.pokemonRunAway = false;
     pokemonViewProvider.refresh();
 
     // Bring the Pokemon view to front
@@ -351,16 +460,11 @@ export async function spawnPokemonForBreak(
       pokemonViewProvider._view.show(true); // true means preserve focus
     }
 
-    pokemonViewProvider.refresh();
-
-    // Formatting Pokémon name
-    const formattedName =
-      state.currentPokemon!.name.charAt(0).toUpperCase() +
-      state.currentPokemon!.name.slice(1);
-
     // Create a new message
     currentPokemonMessage = await vscode.window.showInformationMessage(
-      `⭐ A wild ${formattedName} appeared! You can try to catch it during your ${
+      `⭐ A wild ${formatPokemonName(
+        state.currentPokemon.name
+      )} appeared! You can try to catch it during your ${
         TEST_MODE ? "10 seconds" : "5 minutes"
       } break! ⭐`,
       { modal: false },
