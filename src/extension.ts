@@ -16,7 +16,7 @@ interface PomodoroState {
   pomodoroCount: number;
   shortBreakCount: number;
   longBreakCount: number;
-  currentPhase: "work" | "break";
+  currentPhase: "work" | "shortBreak" | "longBreak";
   currentPokemon?: Pokemon;
   capturedPokemons: Pokemon[];
   justCaptured?: string;
@@ -206,6 +206,7 @@ function showCapturedPokemons() {
 
 function startWorkSession() {
   state.currentPhase = "work";
+  console.log(state.currentPhase);
   state.pomodoroCount++; // Hide previous Pokémon messages
   const duration = TEST_MODE ? 5 : WORK_DURATION; // 1 minute in test mode
   startTimer(duration);
@@ -218,7 +219,8 @@ function startWorkSession() {
 }
 
 async function startShortBreak() {
-  state.currentPhase = "break";
+  state.currentPhase = "shortBreak";
+  console.log(state.currentPhase);
   state.shortBreakCount++;
 
   // Spawn Pokémon in short breaks
@@ -232,9 +234,9 @@ async function startShortBreak() {
 }
 
 async function startLongBreak() {
-  state.currentPhase = "break";
+  state.currentPhase = "longBreak";
+  console.log(state.currentPhase);
   state.longBreakCount++;
-
   vscode.window.showInformationMessage(
     `Excellent work! You've completed 4 Pomodoros. Time for a long break (${
       TEST_MODE ? "15 seconds" : "15 minutes"
@@ -261,22 +263,22 @@ function startTimer(duration: number) {
 
       if (state.currentPhase === "work") {
         // Check if long break is needed
-        if (state.pomodoroCount === 4) {
+        if (state.pomodoroCount % 4 === 0) {
           // Check if it's 4th pomodoro
           startLongBreak(); // Start long break
         } else {
-          const runAwayContent = getCurrentViewContent();
-          state.pokemonRunAway = false;
           startShortBreak(); // Start short break
         }
       } else {
         // If it's break time, check if it's a long break
-        if (state.currentPhase === "break" && state.longBreakCount > 0) {
+        if (state.currentPhase === "longBreak") {
           // Reset pomodoro and short breaks counters
           resetCounters();
-        }
-        // If we're ending a short break and there was a Pokemon
-        if (state.currentPhase === "break" && state.currentPokemon) {
+        } else if (
+          state.currentPhase === "shortBreak" &&
+          state.currentPokemon
+        ) {
+          // If we're ending a short break and there was a Pokemon
           state.pokemonRunAway = true;
           state.currentPokemon = undefined;
           vscode.window.showInformationMessage("Oh no! The Pokémon ran away!");
@@ -306,11 +308,37 @@ function formatPokemonName(pokemonName: string): string {
 }
 
 // Get the current view content
-export function getCurrentViewContent(): string {
+export function getCurrentViewContent(webview: vscode.Webview): string {
   let content;
 
+  // Images
+  const sleepPokemonUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(
+      vscode.extensions.getExtension("dilamar.pkmn-tmtred")!.extensionUri,
+      "src",
+      "resources",
+      "sleep-pokemon.gif"
+    )
+  );
+  const psyduckFloatyUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(
+      vscode.extensions.getExtension("dilamar.pkmn-tmtred")!.extensionUri,
+      "src",
+      "resources",
+      "psyduck-floaty.gif"
+    )
+  );
+  const pikachuSwimmingUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(
+      vscode.extensions.getExtension("dilamar.pkmn-tmtred")!.extensionUri,
+      "src",
+      "resources",
+      "pikachu-swimming-pool.gif"
+    )
+  );
+
   // If it's a short break and there is a Pokémon, show it
-  if (state.currentPhase === "break" && state.currentPokemon) {
+  if (state.currentPhase === "shortBreak" && state.currentPokemon) {
     content = `
       <div class="wild-pokemon">
         <h1>Wild ${formatPokemonName(state.currentPokemon.name)} appeared!</h1>
@@ -319,13 +347,21 @@ export function getCurrentViewContent(): string {
         }" alt="${formatPokemonName(state.currentPokemon.name)}">
       </div>
     `;
-  } else if (state.pokemonRunAway && state.currentPhase === "work") {
+  } else if (state.currentPhase === "work" && state.pokemonRunAway) {
     // If the Pokémon ran away and it's work session, show the message with the timer
     content = `
       <div style="text-align: center; padding: 20px;">
         <h2>Oh no! The Pokémon ran away!</h2>
         <p>Retry in ${formatTimeRemaining(state.timeLeft)}!</p>
       </div>
+    `;
+  } else if (state.currentPhase === "longBreak" && state.longBreakCount > 0) {
+    content = `
+    <div>
+      <h1>Great job!</h1>
+      <p>You've completed 4 Pomodoros. Now take a well-deserved long break.</p>
+        <img src="${sleepPokemonUri}" alt="Psyduck relaxing" />
+    </div>
     `;
   } else if (state.justCaptured) {
     // If the Pokémon ran away and it's work session, show the message with the timer
@@ -337,11 +373,10 @@ export function getCurrentViewContent(): string {
   } else {
     // Default state (no Pokémon)
     content = `
-    <div class="no-pokemon">
+    <div>
       <h2>Focus on your work!</h2>
       <p>A wild Pokémon will appear during your break.</p>
-    </div>
-  `;
+    </div>`;
   }
 
   return `
@@ -403,6 +438,7 @@ function stopTimer() {
 function resetCounters() {
   state.pomodoroCount = 0;
   state.shortBreakCount = 0;
+  state.pokemonRunAway = false;
 }
 
 function updateStatusBar(timeLeft: number) {
@@ -412,25 +448,27 @@ function updateStatusBar(timeLeft: number) {
     .toString()
     .padStart(2, "0")}`;
 
-  const isBreak = state.currentPhase === "break";
-  const isLongBreak = isBreak && state.pomodoroCount === 4;
-  const phase = isBreak
-    ? isLongBreak
-      ? "Long Break"
-      : "Short Break"
+  const isShortBreak = state.currentPhase === "shortBreak";
+  const isLongBreak = state.currentPhase === "longBreak";
+  const phase = isShortBreak
+    ? "Short Break"
+    : isLongBreak
+    ? "Long Break"
     : "Pomodoro";
 
   // Usa il contatore corretto per ogni fase
   const sessionCount = isLongBreak
     ? state.longBreakCount
-    : isBreak
+    : isShortBreak
     ? state.shortBreakCount
     : state.pomodoroCount;
 
   let statusMessage = `${phase} ${sessionCount} | ${phase}: ${timeString}`;
 
-  if (isBreak && !isLongBreak && state.currentPokemon) {
+  if (isShortBreak && state.currentPokemon) {
     statusMessage += ` 🎮 Wild ${state.currentPokemon.name} appeared!`;
+  } else if (isLongBreak) {
+    statusMessage += " 🎉";
   } else {
     statusMessage += " 🍅";
   }

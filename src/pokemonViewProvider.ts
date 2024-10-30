@@ -10,13 +10,13 @@ export class PokemonViewProvider implements vscode.WebviewViewProvider {
     console.log("PokemonViewProvider constructor called");
   }
 
-  private getWebviewContent(): string {
+  private getWebviewContent(webview: vscode.Webview): string {
     console.log("getWebviewContent called with state:", {
       currentPokemon: state.currentPokemon?.name,
       justCaptured: state.justCaptured,
     });
 
-    return getCurrentViewContent();
+    return getCurrentViewContent(webview);
   }
 
   public resolveWebviewView(
@@ -36,7 +36,7 @@ export class PokemonViewProvider implements vscode.WebviewViewProvider {
   public refresh(): void {
     console.log("refresh called on PokemonViewProvider");
     if (this._view) {
-      this._view.webview.html = this.getWebviewContent();
+      this._view.webview.html = this.getWebviewContent(this._view.webview);
       console.log("View content updated");
     } else {
       console.log("Warning: _view is undefined during refresh");
