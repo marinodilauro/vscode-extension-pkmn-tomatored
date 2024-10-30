@@ -19,6 +19,7 @@ interface PomodoroState {
   currentPhase: "work" | "break";
   currentPokemon?: Pokemon;
   capturedPokemons: Pokemon[];
+  justCaptured?: string;
 }
 
 export const state: PomodoroState = {
@@ -30,15 +31,17 @@ export const state: PomodoroState = {
   currentPhase: "work",
   currentPokemon: undefined,
   capturedPokemons: [],
+  justCaptured: undefined,
 };
 
 // Reference to the current message
 let currentPokemonMessage: vscode.MessageItem | undefined;
+let pokemonViewProvider: PokemonViewProvider;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log("activate function called");
 
-  const pokemonViewProvider = new PokemonViewProvider(context.extensionUri);
+  pokemonViewProvider = new PokemonViewProvider(context.extensionUri);
 
   console.log("Registering webview view provider");
   context.subscriptions.push(
@@ -78,21 +81,23 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(startPomodoro, stopPomodoro);
 
-  // View commands
-  context.subscriptions.push(
-    // Command to refresh the view
+  // Register view commands with their implementations
+  const viewCommands = [
     vscode.commands.registerCommand("pkmn-tmtred.refresh", () => {
       vscode.window.showInformationMessage("Refreshing Pokémon...");
+      refreshPokemon();
     }),
-    //Command to catch the Pokémon
     vscode.commands.registerCommand("pkmn-tmtred.capture", () => {
-      vscode.window.showInformationMessage("Captured Pokémon!");
+      capturePokemon();
     }),
     vscode.commands.registerCommand(
       "pkmn-tmtred.showCapturedPokemons",
       showCapturedPokemons
-    )
-  );
+    ),
+  ];
+
+  // Add all commands to subscriptions
+  context.subscriptions.push(startPomodoro, stopPomodoro, ...viewCommands);
 }
 
 // Command to refresh the view and spawn another Pokémon
@@ -105,7 +110,9 @@ async function refreshPokemon() {
       message: undefined,
     };
     vscode.window.showInformationMessage(`A wild ${name} appeared!`);
-    vscode.commands.executeCommand("pokemonView.refresh"); // Update the view with the new Pokémon
+
+    // Refresh the view
+    pokemonViewProvider.refresh();
   } catch (error) {
     vscode.window.showErrorMessage("Failed to fetch a Pokémon.");
   }
@@ -115,10 +122,36 @@ async function refreshPokemon() {
 function capturePokemon() {
   const pokemon = state.currentPokemon;
   if (pokemon) {
+    // Store pokemon before clearing current
+    const capturedName = pokemon.name;
+    // Update state
     state.capturedPokemons.push(pokemon);
-    vscode.window.showInformationMessage(`You captured ${pokemon.name}!`);
+    state.justCaptured = capturedName;
     state.currentPokemon = undefined; // Remove current Pokémon from the view
-    vscode.commands.executeCommand("pokemonView.refresh"); // Refresh the view
+
+    console.log("State after capture:", {
+      justCaptured: state.justCaptured,
+      currentPokemon: state.currentPokemon,
+      capturedPokemonsCount: state.capturedPokemons.length,
+    });
+
+    // Force view refresh
+    pokemonViewProvider.refresh();
+    console.log("Refreshing view after capture");
+
+    // Reset capture state after delay
+    setTimeout(() => {
+      console.log("Resetting justCaptured state");
+      state.justCaptured = undefined;
+      if (pokemonViewProvider) {
+        pokemonViewProvider.refresh();
+      }
+    }, 2000);
+
+    // Show success message in the status bar
+    vscode.window.showInformationMessage(
+      `Gotcha! ${capturedName} was captured!`
+    );
   } else {
     vscode.window.showInformationMessage("No Pokémon to capture!");
   }
