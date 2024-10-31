@@ -208,32 +208,87 @@ function updateCapturedPokemonsPanel() {
     return;
   }
 
-  // Generate content for the Webview
-  const capturedPokemonsHtml = state.capturedPokemons
-    .map(
-      (pokemon) =>
-        `<div style="display: flex; align-items: center; margin-bottom: 10px;">
-           <img src="${
-             pokemon.sprites.front_default
-           }" style="width: 50px; height: 50px; margin-right: 10px;">
-           <span>${formatPokemonName(pokemon.name)}</span>
-         </div>`
-    )
-    .join("");
-
   capturedPokemonsPanel.webview.html = `
     <!DOCTYPE html>
     <html lang="en">
     <head>
       <style>
-        h1 { text-align: center; }
-        .pokemon-list { display: flex; flex-direction: column; align-items: flex-start; }
+        body {
+          font-family: 'Segoe UI', sans-serif;
+          padding: 20px;
+          background: #c3cfe2;
+          border-radius: 15px;
+        }
+        
+        h1 {
+          text-align: center;
+          color: #2c3e50;
+          font-size: 2em;
+          margin-bottom: 30px;
+          text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .pokemon-list {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+          gap: 20px;
+          padding: 20px;
+          border-radius: 15px;
+        }
+        
+        .pokemon-card {
+          background: white;
+          border-radius: 15px;
+          padding: 15px;
+          text-align: center;
+          box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+          transition: transform 0.2s;
+          width: 100px;
+          height: 100px;
+          animation: fadeIn 0.5s ease-in;
+        }
+        
+        .pokemon-card:hover {
+          transform: translateY(-5px);
+          box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        }
+        
+        .pokemon-sprite {
+          width: 90px;
+          height: 90px;
+          border-radius: 10px;
+        }
+        
+        .pokemon-name {
+          color: #000000;
+          font-size: 1em;
+          font-weight: 500;
+        }
+        
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
       </style>
     </head>
     <body>
-      <h1>Captured Pokémon</h1>
+      <h1>🏆 Captured Pokémon</h1>
       <div class="pokemon-list">
-        ${capturedPokemonsHtml || "<h2>No Pokémon captured yet!</h2>"}
+        ${
+          state.capturedPokemons
+            .map(
+              (pokemon) => `
+          <div class="pokemon-card">
+            <img class="pokemon-sprite" src="${
+              pokemon.sprites.front_default
+            }" alt="${formatPokemonName(pokemon.name)}">
+            <span class="pokemon-name">${formatPokemonName(pokemon.name)}</span>
+          </div>
+        `
+            )
+            .join("") ||
+          "<h2 style='text-align:center;grid-column:1/-1;color:#7f8c8d'>No Pokémon captured yet!</h2>"
+        }
       </div>
     </body>
     </html>
@@ -392,89 +447,185 @@ export function getCurrentViewContent(webview: vscode.Webview): string {
     )
   );
 
-  // If it's a short break and there is a Pokémon, show it
+  // Add Pokemon-themed background colors and styles based on session type
+  let sessionStyle = "";
+  switch (state.currentPhase) {
+    case "work":
+      sessionStyle = `
+        background: linear-gradient(135deg, #ff9966, #ff5e62);
+        border-radius: 15px;
+        padding: 30px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+      `;
+      break;
+    case "shortBreak":
+      sessionStyle = `
+        background: linear-gradient(135deg, #89f7fe, #66a6ff);
+        border-radius: 15px;
+        padding: 30px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+      `;
+      break;
+    case "longBreak":
+      sessionStyle = `
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        background: linear-gradient(135deg, #a8edea, #fed6e3);
+        border-radius: 15px;
+        padding: 30px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+      `;
+      break;
+  }
+
   if (state.currentPhase === "shortBreak" && state.currentPokemon) {
     content = `
-      <div class="wild-pokemon">
-        <h1>Wild ${formatPokemonName(state.currentPokemon.name)} appeared!</h1>
-        <img src="${
-          state.currentPokemon.sprites.front_default
-        }" alt="${formatPokemonName(state.currentPokemon.name)}">
+      <div class="wild-pokemon" style="${sessionStyle}">
+        <h1 class="pokemon-title">Wild ${formatPokemonName(
+          state.currentPokemon.name
+        )} appeared!</h1>
+        <div class="pokemon-sprite">
+          <img src="${state.currentPokemon.sprites.front_default}" 
+               alt="${formatPokemonName(state.currentPokemon.name)}">
+        </div>
       </div>
     `;
   } else if (state.currentPhase === "work" && state.pokemonRunAway) {
-    // If the Pokémon ran away and it's work session, show the message with the timer
     content = `
-      <div style="text-align: center; padding: 20px;">
-        <h2>Oh no! The Pokémon ran away!</h2>
-        <p>Retry in ${formatTimeRemaining(state.timeLeft)}!</p>
+      <div style="${sessionStyle}">
+        <h2 class="message">Oh no! The Pokémon ran away!</h2>
+        <p class="timer">Retry in ${formatTimeRemaining(state.timeLeft)}!</p>
       </div>
     `;
-  } else if (state.currentPhase === "longBreak" && state.longBreakCount > 0) {
+  } else if (state.currentPhase === "longBreak") {
     content = `
-    <div>
-      <h1>Great job!</h1>
-      <p>You've completed 4 Pomodoros. Now take a well-deserved long break.</p>
-        <img src="${sleepPokemonUri}" alt="Psyduck relaxing" />
-    </div>
+      <div style="${sessionStyle}">
+        <h1 class="congrats">Great job!</h1>
+        <p class="break-message">You've completed 4 Pomodoros. Take a well-deserved long break.</p>
+        <img src="${sleepPokemonUri}" alt="Relaxing Pokemon" class="break-image" />
+      </div>
     `;
   } else if (state.justCaptured) {
-    // If the Pokémon ran away and it's work session, show the message with the timer
     content = `
-      <div class="capture-success">
-           <h1>Congratulations!</h1>
-           <h2>You captured ${formatPokemonName(state.justCaptured)}!</h2>
+      <div style="${sessionStyle}" class="container">
+        <div class="capture-success">
+          <h1 class="congrats">Congratulations!</h1>
+          <p class="capture-message">You captured ${formatPokemonName(
+            state.justCaptured
+          )}!</p>
+          <div class="sparkles">✨</div>
+        </div>
       </div>`;
   } else {
-    // Default state (no Pokémon)
     content = `
-    <div>
-      <h2>Focus on your work!</h2>
-      <p>A wild Pokémon will appear during your break.</p>
-    </div>`;
+      <div style="${sessionStyle}">
+        <h2 class="focus-message">Focus on your work!</h2>
+        <p class="hint">A wild Pokémon will appear during your break.</p>
+      </div>`;
   }
 
   return `
-       <!DOCTYPE html>
-       <html lang="en">
-       <head>
-         <style>
-           body {
-             display: flex;
-             flex-direction: column;
-             justify-content: center;
-             align-items: center;
-             height: 100vh;
-             margin: 0;
-             padding: 20px;
-             box-sizing: border-box;
-             text-align: center;
-             font-family: var(--vscode-font-family);
-             color: var(--vscode-foreground);
-           }
-           .wild-pokemon img {
-             animation: move 0.5s infinite ;
-             width: 140px;
-             height: 140px;
-             position: relative;
-           }
-           .capture-success {
-             animation: fadeIn 0.5s ease-in;
-           }
-           @keyframes move {
-             0% { transform: translate(0, 0); }
-             100% { transform: translate(${Math.random() * 20 - 10}px, ${
-    Math.random() * 20 - 10
-  }px); }
-           }
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <style>
+        body {
+          display: flex;
+          justify-content: center;
+          height: 100vh;
+          margin: 0;
+          font-family: 'Segoe UI', sans-serif;
+          background: transparent;
+        }
+        
+        .wild-pokemon {
+          text-align: center;
+          animation: fadeIn 0.5s ease-in;
+        }
+        
+        .pokemon-sprite img {
+          width: 180px;
+          height: 180px;
+          animation: bounce 1s infinite;
+        }
+        
+        .pokemon-title {
+          font-size: 2em;
+          color: #2c3e50;
+          margin-bottom: 20px;
+          text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .container {
+          width: 100%;
+          max-width: 400px;
+          margin: 0 auto;
+        }
 
-           h1 { margin-bottom: 10px; }
-           h2 { margin-top: 0; }
-         </style>
-       </head>
-       <body>${content}</body>
-       </html>
-     `;
+        .capture-success {
+          text-align: center;
+          animation: fadeIn 0.5s ease-in;
+          padding: 20px;
+        }
+
+        .congrats {
+          color: #2c3e50;
+          font-size: 1.8em;
+          margin-bottom: 15px;
+        }
+
+        .capture-message {
+          color: #34495e;
+          font-size: 1.2em;
+          margin: 10px 0;
+        }
+        
+        .focus-message {
+          color: #2c3e50;
+          font-size: 2em;
+          margin-bottom: 15px;
+        }
+        
+        .hint {
+          color: white;
+          font-size: 1.2em;
+        }
+        
+        .break-image {
+          max-width: 200px;
+          border-radius: 10px;
+          margin-top: 20px;
+        }
+        
+        .break-message {
+        color: black;
+        }
+
+        .sparkles {
+          font-size: 2em;
+          animation: sparkle 1s infinite;
+        }
+        
+        @keyframes bounce {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-10px); }
+        }
+        
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes sparkle {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+      </style>
+    </head>
+    <body>${content}</body>
+    </html>
+  `;
 }
 
 function stopTimer() {
