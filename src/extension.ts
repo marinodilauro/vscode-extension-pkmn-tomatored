@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { getRandomPokemon } from "./pkmnAPI";
+import { getRandomPokemon, getAllPokemon } from "./pkmnAPI";
 import { PokemonViewProvider } from "./pokemonViewProvider";
 import { Pokemon } from "./pkmnAPI";
 
@@ -23,6 +23,7 @@ interface PomodoroState {
   timeLeft: number;
   pokemonRunAway: boolean;
   captureTimeout?: NodeJS.Timeout;
+  pokemonCache: Pokemon[];
 }
 
 export const state: PomodoroState = {
@@ -38,6 +39,7 @@ export const state: PomodoroState = {
   timeLeft: 0,
   pokemonRunAway: false,
   captureTimeout: undefined,
+  pokemonCache: [],
 };
 
 // Reference to the current message
@@ -143,7 +145,10 @@ function capturePokemon() {
     return;
   }
 
-  const pokemon = state.currentPokemon;
+  const pokemon = {
+    ...state.currentPokemon,
+    isGray: false,
+  };
   const capturedName = pokemon.name;
 
   try {
@@ -155,9 +160,16 @@ function capturePokemon() {
     // Update status bar immediately after capture
     updateStatusBar(state.timeLeft);
 
-    // Update captured pokemon panel if it exists
+    // Send message to webview to update specific Pokemon
     if (capturedPokemonsPanel) {
-      updateCapturedPokemonsPanel();
+      capturedPokemonsPanel.webview.postMessage({
+        command: "updatePokemon",
+        pokemonName: capturedName,
+      });
+    }
+
+    if (pokemonViewProvider) {
+      pokemonViewProvider.refresh();
     }
 
     // Ensure view provider exists
@@ -165,7 +177,6 @@ function capturePokemon() {
       throw new Error("Pokemon view provider not initialized");
     }
 
-    pokemonViewProvider.refresh();
     vscode.window.showInformationMessage(
       `Gotcha! ${capturedName} was captured!`
     );
@@ -177,33 +188,90 @@ function capturePokemon() {
 }
 
 // Update showCapturedPokemons function
-function showCapturedPokemons() {
+async function showCapturedPokemons() {
   if (capturedPokemonsPanel) {
     // If panel exists, show it
     capturedPokemonsPanel.reveal();
     return;
   }
 
-  capturedPokemonsPanel = vscode.window.createWebviewPanel(
-    "capturedPokemons",
-    "Captured Pokémon",
-    vscode.ViewColumn.One,
-    {
-      enableScripts: true,
+  try {
+    // Create and show panel
+    capturedPokemonsPanel = vscode.window.createWebviewPanel(
+      "capturedPokemons",
+      "Pokédex",
+      vscode.ViewColumn.One,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+      }
+    );
+
+    // Show loading state
+    updateLoadingState();
+
+    // Use cached data or fetch new
+    const allPokemon =
+      state.pokemonCache.length > 0
+        ? state.pokemonCache
+        : await getAllPokemon();
+
+    // Cache for future use
+    if (state.pokemonCache.length === 0) {
+      state.pokemonCache = allPokemon;
     }
-  );
 
-  // Update panel content
-  updateCapturedPokemonsPanel();
+    // Update captured status
+    state.capturedPokemons.forEach((captured) => {
+      const pokemon = allPokemon.find((p) => p.name === captured.name);
+      if (pokemon) {
+        pokemon.isGray = false;
+      }
+    });
 
-  // Handle panel disposal
-  capturedPokemonsPanel.onDidDispose(() => {
-    capturedPokemonsPanel = undefined;
-  });
+    // Update panel content with all Pokemon
+    updateCapturedPokemonsPanelWithAll(allPokemon);
+
+    capturedPokemonsPanel.onDidDispose(() => {
+      capturedPokemonsPanel = undefined;
+    });
+  } catch (error) {
+    vscode.window.showErrorMessage("Failed to load Pokemon list");
+  }
 }
 
-// Command to show captured Pokémons
-function updateCapturedPokemonsPanel() {
+// Loading state function
+function updateLoadingState() {
+  if (!capturedPokemonsPanel) {
+    return;
+  }
+
+  capturedPokemonsPanel.webview.html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        .loader {
+          text-align: center;
+          padding: 20px;
+        }
+        .loading-text {
+          font-size: 1.2em;
+          color: white;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="loader">
+        <h2 class="loading-text">Loading Pokédex...</h2>
+      </div>
+    </body>
+    </html>
+  `;
+}
+
+// Function to update panel with all Pokemon
+function updateCapturedPokemonsPanelWithAll(pokemonList: Pokemon[]) {
   if (!capturedPokemonsPanel) {
     return;
   }
@@ -212,11 +280,13 @@ function updateCapturedPokemonsPanel() {
     <!DOCTYPE html>
     <html lang="en">
     <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <style>
         body {
           font-family: 'Segoe UI', sans-serif;
           padding: 20px;
-          background: #c3cfe2;
+          background: linear-gradient(135deg, #f5f7fa, #c3cfe2);
           border-radius: 15px;
         }
         
@@ -230,41 +300,115 @@ function updateCapturedPokemonsPanel() {
         
         .pokemon-list {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-          gap: 20px;
-          padding: 20px;
+          grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+          gap: 16px;
+          padding: 16px;
           border-radius: 15px;
         }
         
         .pokemon-card {
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          align-items: center;
           background: white;
           border-radius: 15px;
-          padding: 15px;
+          padding: 12px;
           text-align: center;
           box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-          transition: transform 0.2s;
-          width: 100px;
-          height: 100px;
-          animation: fadeIn 0.5s ease-in;
+          width: 120px;
+          height: 120px;
+          margin: 0 auto;
         }
         
-        .pokemon-card:hover {
+        .pokemon-card.captured {
+          transition: transform 0.2s;
+        }
+
+        .pokemon-card.captured:hover {
           transform: translateY(-5px);
           box-shadow: 0 6px 12px rgba(0,0,0,0.15);
         }
         
         .pokemon-sprite {
-          width: 90px;
-          height: 90px;
-          border-radius: 10px;
+          width: 80px;
+          height: 80px;
+          border-radius: 8px;
         }
         
+        .pokemon-sprite.gray {
+          filter: grayscale(100%);
+          opacity: 0.5;
+        }
+
         .pokemon-name {
           color: #000000;
           font-size: 1em;
           font-weight: 500;
         }
         
+        .pokemon-name.gray {
+          color: #888888;
+        }
+        
+        .controls {
+          display: flex;
+          gap: 16px;
+          margin-bottom: 20px;
+          padding: 0 16px;
+        }
+
+        .search-container {
+          flex: 1;
+          position: relative;
+          display: flex;
+          align-items: center;
+        }
+
+        .search-box {
+          width: 100%;
+          padding: 8px 12px;
+          padding-right: 30px; /* Space for clear button */
+          border: 2px solid #e2e8f0;
+          border-radius: 8px;
+          font-size: 1em;
+          outline: none;
+          transition: border-color 0.2s;
+        }
+
+        .clear-search {
+          position: absolute;
+          right: 8px;
+          background: none;
+          border: none;
+          color: #94a3b8;
+          cursor: pointer;
+          padding: 4px;
+          display: none;
+          font-size: 1.2em;
+        }
+
+        .clear-search:hover {
+          color: #64748b;
+        }
+
+        .search-box:focus {
+          border-color: #63b3ed;
+        }
+
+        .filter-select {
+          padding: 8px 12px;
+          border: 2px solid #e2e8f0;
+          border-radius: 8px;
+          font-size: 1em;
+          background-color: white;
+          cursor: pointer;
+        }
+
+        .hidden {
+          display: none !important;
+        }
+
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(10px); }
           to { opacity: 1; transform: translateY(0); }
@@ -272,24 +416,98 @@ function updateCapturedPokemonsPanel() {
       </style>
     </head>
     <body>
-      <h1>🏆 Captured Pokémon</h1>
+      <h1>🏆 Pokédex</h1>
+
+      <div class="controls">
+        <div class="search-container">
+          <input 
+            type="text" 
+            class="search-box" 
+            placeholder="Search Pokémon..." 
+            id="searchInput"
+          >
+          <button class="clear-search" id="clearSearch">✕</button>
+        </div>
+        <select class="filter-select" id="statusFilter">
+          <option value="all">All Pokémon</option>
+          <option value="captured">Captured</option>
+          <option value="uncaptured">Not Captured</option>
+        </select>
+      </div>
+
       <div class="pokemon-list">
-        ${
-          state.capturedPokemons
-            .map(
-              (pokemon) => `
-          <div class="pokemon-card">
-            <img class="pokemon-sprite" src="${
-              pokemon.sprites.front_default
-            }" alt="${formatPokemonName(pokemon.name)}">
-            <span class="pokemon-name">${formatPokemonName(pokemon.name)}</span>
+        ${pokemonList
+          .map(
+            (pokemon) => `
+          <div id="${pokemon.name}-card" 
+               class="pokemon-card ${pokemon.isGray ? "" : "captured"}"
+               data-name="${pokemon.name}"
+               data-status="${pokemon.isGray ? "uncaptured" : "captured"}">
+            <img id="${pokemon.name}-sprite" 
+                 class="pokemon-sprite ${pokemon.isGray ? "gray" : ""}" 
+                 loading="lazy"
+                 src="${pokemon.sprites.front_default}" 
+                 alt="${formatPokemonName(pokemon.name)}">
+            <span id="${pokemon.name}-name" 
+                  class="pokemon-name ${pokemon.isGray ? "gray" : ""}">
+              ${formatPokemonName(pokemon.name)}
+            </span>
           </div>
         `
-            )
-            .join("") ||
-          "<h2 style='text-align:center;grid-column:1/-1;color:#7f8c8d'>No Pokémon captured yet!</h2>"
+          )
+          .join("")}
+      </div>       
+
+      <script>
+        window.addEventListener('message', event => {
+          const message = event.data;
+          if (message.command === 'updatePokemon') { 
+            const card = document.getElementById(message.pokemonName + '-card');
+            const sprite = document.getElementById(message.pokemonName + '-sprite');
+            const name = document.getElementById(message.pokemonName + '-name');
+            
+            if (card && sprite && name) {
+              card.classList.add('captured');
+              card.dataset.status = 'captured';
+              sprite.classList.remove('gray');
+              name.classList.remove('gray');
+            }
+          }
+        });
+
+        // Search and filter functionality
+        const searchInput = document.getElementById('searchInput');
+        const statusFilter = document.getElementById('statusFilter');
+        const pokemonCards = document.querySelectorAll('.pokemon-card');
+        const clearButton = document.getElementById('clearSearch');
+        
+        function updateClearButton() {
+          clearButton.style.display = searchInput.value ? 'block' : 'none';
         }
-      </div>
+
+        function filterPokemon() {
+          const searchTerm = searchInput.value.toLowerCase();
+          const filterValue = statusFilter.value;
+
+          pokemonCards.forEach(card => {
+            const name = card.dataset.name;
+            const status = card.dataset.status;
+            const matchesSearch = name.startsWith(searchTerm);
+            const matchesFilter = filterValue === 'all' || status === filterValue;
+
+            card.classList.toggle('hidden', !matchesSearch || !matchesFilter);
+          });
+        }
+
+        clearButton.addEventListener('click', () => {searchInput.value = ''; updateClearButton(); filterPokemon();});
+        searchInput.addEventListener('input', () => {updateClearButton(); filterPokemon();});
+        searchInput.addEventListener('input', filterPokemon);
+        statusFilter.addEventListener('change', filterPokemon);
+
+        // Initial state
+        updateClearButton();
+      </script>
+
     </body>
     </html>
   `;
