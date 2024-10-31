@@ -22,6 +22,7 @@ interface PomodoroState {
   justCaptured?: string;
   timeLeft: number;
   pokemonRunAway: boolean;
+  captureTimeout?: NodeJS.Timeout;
 }
 
 export const state: PomodoroState = {
@@ -36,11 +37,15 @@ export const state: PomodoroState = {
   justCaptured: undefined,
   timeLeft: 0,
   pokemonRunAway: false,
+  captureTimeout: undefined,
 };
 
 // Reference to the current message
 let currentPokemonMessage: vscode.MessageItem | undefined;
+
+// References to the views
 let pokemonViewProvider: PokemonViewProvider;
+let capturedPokemonsPanel: vscode.WebviewPanel | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log("activate function called");
@@ -108,6 +113,10 @@ export function activate(context: vscode.ExtensionContext) {
 async function refreshPokemon() {
   try {
     const { name, spriteUrl } = await getRandomPokemon();
+    if (!name || !spriteUrl) {
+      throw new Error("Invalid Pokemon data received");
+    }
+
     state.currentPokemon = {
       name,
       sprites: { front_default: spriteUrl },
@@ -115,55 +124,67 @@ async function refreshPokemon() {
     };
     vscode.window.showInformationMessage(`A wild ${name} appeared!`);
 
-    // Refresh the view
+    if (!pokemonViewProvider) {
+      throw new Error("Pokemon view provider not initialized");
+    }
     pokemonViewProvider.refresh();
   } catch (error) {
-    vscode.window.showErrorMessage("Failed to fetch a Pokémon.");
+    const message =
+      error instanceof Error ? error.message : "Failed to fetch a Pokémon";
+    vscode.window.showErrorMessage(message);
   }
 }
 
 // //Command to catch the Pokémon
 function capturePokemon() {
+  // Validate state and pokemon existence
+  if (!state || !state.currentPokemon) {
+    vscode.window.showErrorMessage("No Pokemon available to capture!");
+    return;
+  }
+
   const pokemon = state.currentPokemon;
-  if (pokemon) {
-    // Store pokemon before clearing current
-    const capturedName = pokemon.name;
+  const capturedName = pokemon.name;
+
+  try {
     // Update state
     state.capturedPokemons.push(pokemon);
     state.justCaptured = capturedName;
-    state.currentPokemon = undefined; // Remove current Pokémon from the view
+    state.currentPokemon = undefined;
 
-    console.log("State after capture:", {
-      justCaptured: state.justCaptured,
-      currentPokemon: state.currentPokemon,
-      capturedPokemonsCount: state.capturedPokemons.length,
-    });
+    // Update status bar immediately after capture
+    updateStatusBar(state.timeLeft);
 
-    // Force view refresh
+    // Update captured pokemon panel if it exists
+    if (capturedPokemonsPanel) {
+      updateCapturedPokemonsPanel();
+    }
+
+    // Ensure view provider exists
+    if (!pokemonViewProvider) {
+      throw new Error("Pokemon view provider not initialized");
+    }
+
     pokemonViewProvider.refresh();
-    console.log("Refreshing view after capture");
-
-    // Reset capture state after delay
-    setTimeout(() => {
-      console.log("Resetting justCaptured state");
-      state.justCaptured = undefined;
-      if (pokemonViewProvider) {
-        pokemonViewProvider.refresh();
-      }
-    }, 2000);
-
-    // Show success message in the status bar
     vscode.window.showInformationMessage(
       `Gotcha! ${capturedName} was captured!`
     );
-  } else {
-    vscode.window.showInformationMessage("No Pokémon to capture!");
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to capture Pokemon";
+    vscode.window.showErrorMessage(message);
   }
 }
 
-// Command to show captured Pokémons
+// Update showCapturedPokemons function
 function showCapturedPokemons() {
-  const panel = vscode.window.createWebviewPanel(
+  if (capturedPokemonsPanel) {
+    // If panel exists, show it
+    capturedPokemonsPanel.reveal();
+    return;
+  }
+
+  capturedPokemonsPanel = vscode.window.createWebviewPanel(
     "capturedPokemons",
     "Captured Pokémon",
     vscode.ViewColumn.One,
@@ -171,6 +192,21 @@ function showCapturedPokemons() {
       enableScripts: true,
     }
   );
+
+  // Update panel content
+  updateCapturedPokemonsPanel();
+
+  // Handle panel disposal
+  capturedPokemonsPanel.onDidDispose(() => {
+    capturedPokemonsPanel = undefined;
+  });
+}
+
+// Command to show captured Pokémons
+function updateCapturedPokemonsPanel() {
+  if (!capturedPokemonsPanel) {
+    return;
+  }
 
   // Generate content for the Webview
   const capturedPokemonsHtml = state.capturedPokemons
@@ -185,7 +221,7 @@ function showCapturedPokemons() {
     )
     .join("");
 
-  panel.webview.html = `
+  capturedPokemonsPanel.webview.html = `
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -206,10 +242,19 @@ function showCapturedPokemons() {
 
 function startWorkSession() {
   state.currentPhase = "work";
-  console.log(state.currentPhase);
   state.pomodoroCount++; // Hide previous Pokémon messages
   const duration = TEST_MODE ? 5 : WORK_DURATION; // 1 minute in test mode
+
+  // Clear capture-related states when starting work
+  state.justCaptured = undefined;
+  state.pokemonRunAway = false;
+
+  if (pokemonViewProvider) {
+    pokemonViewProvider.refresh();
+  }
+
   startTimer(duration);
+  updateStatusBar(duration);
 
   vscode.window.showInformationMessage(
     `Starting work session ${
@@ -220,7 +265,6 @@ function startWorkSession() {
 
 async function startShortBreak() {
   state.currentPhase = "shortBreak";
-  console.log(state.currentPhase);
   state.shortBreakCount++;
 
   // Spawn Pokémon in short breaks
@@ -235,16 +279,20 @@ async function startShortBreak() {
 
 async function startLongBreak() {
   state.currentPhase = "longBreak";
-  console.log(state.currentPhase);
   state.longBreakCount++;
-  vscode.window.showInformationMessage(
-    `Excellent work! You've completed 4 Pomodoros. Time for a long break (${
-      TEST_MODE ? "15 seconds" : "15 minutes"
-    })!`
-  );
 
   const duration = TEST_MODE ? 15 : LONG_BREAK;
   startTimer(duration);
+
+  if (pokemonViewProvider) {
+    pokemonViewProvider.refresh();
+  }
+
+  vscode.window.showInformationMessage(
+    `Great job! Time for a long break (${
+      TEST_MODE ? "15 seconds" : "15 minutes"
+    })!`
+  );
 }
 
 function startTimer(duration: number) {
@@ -274,16 +322,23 @@ function startTimer(duration: number) {
         if (state.currentPhase === "longBreak") {
           // Reset pomodoro and short breaks counters
           resetCounters();
-        } else if (
-          state.currentPhase === "shortBreak" &&
-          state.currentPokemon
-        ) {
+          startWorkSession();
+          if (pokemonViewProvider) {
+            pokemonViewProvider.refresh();
+          }
+        } else if (state.currentPhase === "shortBreak") {
           // If we're ending a short break and there was a Pokemon
-          state.pokemonRunAway = true;
-          state.currentPokemon = undefined;
-          vscode.window.showInformationMessage("Oh no! The Pokémon ran away!");
+          if (state.currentPokemon) {
+            state.pokemonRunAway = true;
+            state.currentPokemon = undefined;
+            vscode.window.showInformationMessage(
+              "Oh no! The Pokémon ran away!"
+            );
+          }
+          startWorkSession();
+        } else {
+          startWorkSession();
         }
-        startWorkSession(); // Start work session
       }
     } else {
       updateStatusBar(timeLeft);
@@ -442,38 +497,44 @@ function resetCounters() {
 }
 
 function updateStatusBar(timeLeft: number) {
-  const minutes = Math.floor(timeLeft / 60);
-  const seconds = timeLeft % 60;
-  const timeString = `${minutes.toString().padStart(2, "0")}:${seconds
-    .toString()
-    .padStart(2, "0")}`;
+  let statusText = "";
+  const sessionCount =
+    state.currentPhase === "work"
+      ? Math.floor(state.pomodoroCount / 2) + 1
+      : state.currentPhase === "shortBreak"
+      ? state.shortBreakCount
+      : state.longBreakCount;
 
-  const isShortBreak = state.currentPhase === "shortBreak";
-  const isLongBreak = state.currentPhase === "longBreak";
-  const phase = isShortBreak
-    ? "Short Break"
-    : isLongBreak
-    ? "Long Break"
-    : "Pomodoro";
+  switch (state.currentPhase) {
+    case "work":
+      statusText = `Pomodoro ${sessionCount} | Pomodoro ${formatTimeRemaining(
+        timeLeft
+      )} 🍅`;
+      break;
 
-  // Usa il contatore corretto per ogni fase
-  const sessionCount = isLongBreak
-    ? state.longBreakCount
-    : isShortBreak
-    ? state.shortBreakCount
-    : state.pomodoroCount;
+    case "shortBreak":
+      statusText = `Short Break ${sessionCount} | Short Break ${formatTimeRemaining(
+        timeLeft
+      )}`;
+      if (state.justCaptured) {
+        statusText += ` | Congratulations! You captured ${formatPokemonName(
+          state.justCaptured
+        )}!`;
+      } else if (state.currentPokemon) {
+        statusText += ` | 🎮 Wild ${formatPokemonName(
+          state.currentPokemon.name
+        )} appeared!`;
+      }
+      break;
 
-  let statusMessage = `${phase} ${sessionCount} | ${phase}: ${timeString}`;
-
-  if (isShortBreak && state.currentPokemon) {
-    statusMessage += ` 🎮 Wild ${state.currentPokemon.name} appeared!`;
-  } else if (isLongBreak) {
-    statusMessage += " 🎉";
-  } else {
-    statusMessage += " 🍅";
+    case "longBreak":
+      statusText = `Long Break ${sessionCount} | Long Break ${formatTimeRemaining(
+        timeLeft
+      )} 🎉`;
+      break;
   }
 
-  vscode.window.setStatusBarMessage(statusMessage);
+  vscode.window.setStatusBarMessage(statusText);
 }
 
 export async function spawnPokemonForBreak() {
