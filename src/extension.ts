@@ -286,7 +286,7 @@ function updateCapturedPokemonsPanelWithAll(pokemonList: Pokemon[]) {
         body {
           font-family: 'Segoe UI', sans-serif;
           padding: 20px;
-          background: linear-gradient(135deg, #f5f7fa, #c3cfe2);
+          background-color: #f3f5f9;
           border-radius: 15px;
         }
         
@@ -368,7 +368,7 @@ function updateCapturedPokemonsPanelWithAll(pokemonList: Pokemon[]) {
         .search-box {
           width: 100%;
           padding: 8px 12px;
-          padding-right: 30px; /* Space for clear button */
+          padding-right: 30px;
           border: 2px solid #e2e8f0;
           border-radius: 8px;
           font-size: 1em;

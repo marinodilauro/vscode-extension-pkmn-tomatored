@@ -10,8 +10,8 @@ export interface Pokemon {
 
 export async function getAllPokemon(): Promise<Pokemon[]> {
   const pokemonList: Pokemon[] = [];
-  const totalPokemon = 1302;
-  const batchSize = 50; // Process in smaller batches
+  const totalPokemon = 1025;
+  const batchSize = 150; // Process in smaller batches
 
   try {
     // Process in batches
@@ -76,7 +76,7 @@ export async function getRandomPokemon(): Promise<{
   name: string;
   spriteUrl: string;
 }> {
-  const randomId = Math.floor(Math.random() * 898) + 1; // Pokémon ID
+  const randomId = Math.floor(Math.random() * 1025) + 1; // Pokémon ID
   const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${randomId}`);
 
   if (!response.ok) {
