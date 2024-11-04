@@ -300,7 +300,7 @@ function updateCapturedPokemonsPanelWithAll(pokemonList: Pokemon[]) {
         
         .pokemon-list {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+          grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
           gap: 16px;
           padding: 16px;
           border-radius: 15px;

@@ -10,7 +10,7 @@ export interface Pokemon {
 
 export async function getAllPokemon(): Promise<Pokemon[]> {
   const pokemonList: Pokemon[] = [];
-  const totalPokemon = 898; // Reduced from 1302 to avoid timeout
+  const totalPokemon = 1302;
   const batchSize = 50; // Process in smaller batches
 
   try {
