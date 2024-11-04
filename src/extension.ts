@@ -670,6 +670,9 @@ export function getCurrentViewContent(webview: vscode.Webview): string {
   switch (state.currentPhase) {
     case "work":
       sessionStyle = `
+        display: flex;
+        flex-direction: column;
+        align-items: center;
         background: linear-gradient(135deg, #ff9966, #ff5e62);
         border-radius: 15px;
         padding: 30px;
@@ -678,6 +681,9 @@ export function getCurrentViewContent(webview: vscode.Webview): string {
       break;
     case "shortBreak":
       sessionStyle = `
+        display: flex;
+        flex-direction: column;
+        align-items: center;
         background: linear-gradient(135deg, #89f7fe, #66a6ff);
         border-radius: 15px;
         padding: 30px;
@@ -726,15 +732,13 @@ export function getCurrentViewContent(webview: vscode.Webview): string {
     `;
   } else if (state.justCaptured) {
     content = `
-      <div style="${sessionStyle}" class="container">
-        <div class="capture-success">
+        <div style="${sessionStyle}" class="capture-success">
           <h1 class="congrats">Congratulations!</h1>
           <p class="capture-message">You captured ${formatPokemonName(
             state.justCaptured
           )}!</p>
           <div class="sparkles">✨</div>
-        </div>
-      </div>`;
+        </div>`;
   } else {
     content = `
       <div style="${sessionStyle}">
@@ -776,21 +780,19 @@ export function getCurrentViewContent(webview: vscode.Webview): string {
         }
         
         .container {
-          width: 100%;
-          max-width: 400px;
-          margin: 0 auto;
+          text-align: center;
+          animation: fadeIn 0.5s ease-in;
         }
 
         .capture-success {
           text-align: center;
           animation: fadeIn 0.5s ease-in;
-          padding: 20px;
         }
 
         .congrats {
-          color: #2c3e50;
           font-size: 1.8em;
-          margin-bottom: 15px;
+          color: #2c3e50;
+          margin-bottom: 20px;
         }
 
         .capture-message {
@@ -811,7 +813,7 @@ export function getCurrentViewContent(webview: vscode.Webview): string {
         }
         
         .break-image {
-          max-width: 200px;
+          max-width: 190px;
           border-radius: 10px;
           margin-top: 20px;
         }
@@ -831,8 +833,8 @@ export function getCurrentViewContent(webview: vscode.Webview): string {
         }
         
         @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(-20px); }
-          to { opacity: 1; transform: translateY(0); }
+          from { opacity: 0;}
+          to { opacity: 1;}
         }
         
         @keyframes sparkle {
