@@ -52,6 +52,7 @@ export async function getPokemonPage(
                 `Failed to fetch ${pokemon.name}: ${detailResponse.status}`
               );
             }
+
             const detail = (await detailResponse.json()) as Pokemon;
 
             // Only return Pokemon with valid sprites
@@ -90,10 +91,31 @@ export async function getPokemonPage(
   }
 }
 
-export async function searchPokemon(searchTerm: string): Promise<Pokemon[]> {
+export async function searchPokemon(
+  searchTerm: string,
+  page: number = 1
+): Promise<{
+  pokemon: Pokemon[];
+  pagination: {
+    count: number;
+    currentPage: number;
+    totalPages: number;
+    next: string | null;
+    previous: string | null;
+  };
+}> {
   try {
-    if (!searchTerm.trim()) {
-      return [];
+    if (!searchTerm.trim() || searchTerm.length < 2) {
+      return {
+        pokemon: [],
+        pagination: {
+          count: 0,
+          currentPage: 1,
+          totalPages: 1,
+          next: null,
+          previous: null,
+        },
+      };
     }
 
     console.log(`Searching for Pokemon with term: ${searchTerm}`);
@@ -121,40 +143,68 @@ export async function searchPokemon(searchTerm: string): Promise<Pokemon[]> {
 
         const data = (await listResponse.json()) as PokemonListResponse;
         const matchedPokemon = data.results.filter((pokemon) =>
-          pokemon.name.toLowerCase().includes(searchTerm.toLowerCase())
+          pokemon.name.toLowerCase().startsWith(searchTerm.toLowerCase())
         );
 
         console.log(`Found ${matchedPokemon.length} matches in list`);
 
-        const pokemonDetails = await Promise.all(
-          matchedPokemon.map(async (pokemon) => {
-            try {
-              const detailResponse = await fetch(pokemon.url);
-              if (!detailResponse.ok) {
-                console.warn(`Failed to fetch details for ${pokemon.name}`);
+        // Pagination calculations
+        const itemsPerPage = 10;
+        const startIndex = (page - 1) * itemsPerPage;
+        const endIndex = startIndex + itemsPerPage;
+        const totalItems = matchedPokemon.length;
+        const totalPages = Math.ceil(totalItems / itemsPerPage);
+
+        // Get only current page items
+        const currentPagePokemon = matchedPokemon.slice(startIndex, endIndex);
+
+        // Fetch details in smaller batches
+        const batchSize = 5;
+        const pokemonDetails = [];
+
+        for (let i = 0; i < currentPagePokemon.length; i += batchSize) {
+          const batch = currentPagePokemon.slice(i, i + batchSize);
+          const batchResults = await Promise.all(
+            batch.map(async (pokemon) => {
+              try {
+                const detailResponse = await fetch(pokemon.url);
+                if (!detailResponse.ok) {
+                  return null;
+                }
+                const detail = (await detailResponse.json()) as Pokemon;
+                return {
+                  name: detail.name,
+                  sprites: { front_default: detail.sprites.front_default },
+                  isGray: true,
+                } as Pokemon;
+              } catch (error) {
                 return null;
               }
+            })
+          );
+          pokemonDetails.push(
+            ...batchResults.filter((p): p is Pokemon => p !== null)
+          );
+        }
 
-              const detail = (await detailResponse.json()) as {
-                name: string;
-                sprites: { front_default: string };
-              };
-
-              return {
-                name: detail.name,
-                sprites: { front_default: detail.sprites.front_default },
-                isGray: true,
-              } as Pokemon;
-            } catch (error) {
-              console.warn(`Error fetching ${pokemon.name}:`, error);
-              return null;
-            }
-          })
-        );
-
-        return pokemonDetails.filter(
+        const filteredPokemon = pokemonDetails.filter(
           (pokemon): pokemon is Pokemon => pokemon !== null
         );
+
+        return {
+          pokemon: filteredPokemon,
+          pagination: {
+            count: totalItems,
+            currentPage: page,
+            totalPages,
+            next:
+              page < totalPages
+                ? `search?term=${searchTerm}&page=${page + 1}`
+                : null,
+            previous:
+              page > 1 ? `search?term=${searchTerm}&page=${page - 1}` : null,
+          },
+        };
       }
 
       // Direct search succeeded
@@ -163,20 +213,38 @@ export async function searchPokemon(searchTerm: string): Promise<Pokemon[]> {
         sprites: { front_default: string };
       };
 
-      return [
-        {
-          name: pokemonData.name,
-          sprites: { front_default: pokemonData.sprites.front_default },
-          isGray: true,
+      return {
+        pokemon: [
+          {
+            name: pokemonData.name,
+            sprites: { front_default: pokemonData.sprites.front_default },
+            isGray: true,
+          },
+        ],
+        pagination: {
+          count: 1,
+          currentPage: 1,
+          totalPages: 1,
+          next: null,
+          previous: null,
         },
-      ];
+      };
     } catch (error) {
       console.error("Search failed:", error);
       throw new Error("Failed to search Pokemon");
     }
   } catch (error) {
     console.error("Search failed:", error);
-    return []; // Return empty array instead of throwing to stop the loading spinner
+    return {
+      pokemon: [], // Return empty array instead of throwing to stop the loading spinner
+      pagination: {
+        count: 0,
+        currentPage: 1,
+        totalPages: 1,
+        next: null,
+        previous: null,
+      },
+    };
   }
 }
 

@@ -218,15 +218,27 @@ async function showCapturedPokemons() {
     // Handle messages from webview
     capturedPokemonsPanel.webview.onDidReceiveMessage(async (message) => {
       try {
+        const searchState = {
+          term: message.searchState?.term || "",
+          filter: message.searchState?.filter || "all",
+        };
+
         switch (message.command) {
           case "fetchPage":
             const { pokemon, pagination } = await getPokemonPage(message.url);
-            updateCapturedPokemonsPanelWithAll(pokemon, pagination);
+            updateCapturedPokemonsPanelWithAll(
+              pokemon,
+              pagination,
+              searchState
+            );
             break;
           case "search":
             const searchResults = await searchPokemon(message.searchTerm);
-            // Update panel with search results without pagination
-            updateCapturedPokemonsPanelWithAll(searchResults);
+            updateCapturedPokemonsPanelWithAll(
+              searchResults.pokemon,
+              null,
+              searchState
+            );
             break;
         }
       } catch (error) {
@@ -416,18 +428,26 @@ function generatePageNumbers(currentPage: number, totalPages: number): string {
 function updateCapturedPokemonsPanelWithAll(
   pokemonList: Pokemon[],
   pagination?: any,
-  searchTerm?: string
+  searchState = {
+    term: "",
+    filter: "all",
+  }
 ) {
   if (!capturedPokemonsPanel) {
     return;
   }
+
+  const searchInput = searchState?.term || "";
+  const filterValue = searchState?.filter || "all";
 
   // Pagination controls
   const paginationHTML = pagination
     ? `
     <div class="pagination">
       <button class="page-btn ${!pagination.previous ? "disabled" : ""}" 
-              data-url="${pagination.previous || ""}"
+              data-url="search?term=${searchState.term}&page=${
+        pagination.currentPage - 1
+      }"
               ${!pagination.previous ? "disabled" : ""}>
         Previous
       </button>
@@ -437,13 +457,38 @@ function updateCapturedPokemonsPanelWithAll(
       </div>
 
       <button class="page-btn ${!pagination.next ? "disabled" : ""}" 
-              data-url="${pagination.next || ""}"
+              data-url="search?term=${searchState.term}&page=${
+        pagination.currentPage + 1
+      }"
               ${!pagination.next ? "disabled" : ""}>
         Next
       </button>
     </div>
     `
     : "";
+
+  // Add event listener for pagination in the script section
+  const paginationScript = `
+      document.addEventListener('click', (e) => {
+        if (e.target.matches('.page-btn:not(.disabled)')) {
+          const url = e.target.dataset.url;
+          if (url && url.startsWith('search')) {
+            const params = new URLSearchParams(url.split('?')[1]);
+            showLoading();
+            vscode.postMessage({
+              command: 'search',
+              searchTerm: params.get('term'),
+              page: parseInt(params.get('page') || '1'),
+              filter: statusFilter.value,
+              searchState: {
+                term: params.get('term'),
+                filter: statusFilter.value
+              }
+            });
+          }
+        }
+      });
+  `;
 
   capturedPokemonsPanel.webview.html = `
     <!DOCTYPE html>
@@ -679,16 +724,24 @@ function updateCapturedPokemonsPanelWithAll(
             class="search-box" 
             placeholder="Search Pokémon..." 
             id="searchInput"
-            value="${searchTerm || ""}" // Persist search term
+            value="${searchInput}"
           >
           <button class="clear-search ${
-            searchTerm ? "visible" : ""
-          }" id="clearSearch">✕</button>
+            searchInput ? "visible" : ""
+          }" id="clearSearch">
+            ✕
+          </button>
         </div>
         <select class="filter-select" id="statusFilter">
-          <option value="all">All Pokémon</option>
-          <option value="captured">Captured</option>
-          <option value="uncaptured">Not Captured</option>
+          <option value="all" ${
+            filterValue === "all" ? "selected" : ""
+          }>All Pokémon</option>
+          <option value="captured" ${
+            filterValue === "captured" ? "selected" : ""
+          }>Captured</option>
+          <option value="uncaptured" ${
+            filterValue === "uncaptured" ? "selected" : ""
+          }>Not Captured</option>
         </select>
       </div>
 
@@ -718,79 +771,10 @@ function updateCapturedPokemonsPanelWithAll(
 
       <script>
         const vscode = acquireVsCodeApi();
-        const searchInput = document.getElementById('searchInput');
-        const statusFilter = document.getElementById('statusFilter');
-        const clearButton = document.getElementById('clearSearch');
-        const loadingOverlay = document.querySelector('.loading-overlay');
-        let searchTimeout;
 
-        function showLoading() {
-          loadingOverlay.classList.add('active');
-        }
 
-        function hideLoading() {
-          loadingOverlay.classList.remove('active');
-        }
-
-        function updateClearButton() {
-          clearButton.style.display = searchInput.value ? 'block' : 'none';
-        }
-
-        async function handleSearch() {
-          const searchTerm = searchInput.value.toLowerCase();
-          const filterValue = statusFilter.value;
-          
-          if (searchTerm.length >= 2) {
-            showLoading();
-            vscode.postMessage({
-              command: 'search',
-              searchTerm: searchTerm,
-              filter: filterValue
-            });
-          } else if (searchTerm.length === 0) {
-            showLoading();
-            vscode.postMessage({
-              command: 'fetchPage',
-              url: 'https://pokeapi.co/api/v2/pokemon?offset=0&limit=20'
-            });
-          }
-        }
-
-        searchInput.addEventListener('input', () => {
-          updateClearButton();
-          clearTimeout(searchTimeout);
-          searchTimeout = setTimeout(handleSearch, 300);
-        });
-
-        clearButton.addEventListener('click', () => {
-          searchInput.value = '';
-          updateClearButton();
-          vscode.postMessage({
-            command: 'fetchPage',
-            url: 'https://pokeapi.co/api/v2/pokemon?offset=0&limit=20'
-          });
-        });
-
-        statusFilter.addEventListener('change', handleSearch);
-
-        // Initial state
-        updateClearButton();
-
-        // Pagination
-        document.addEventListener('click', async (e) => {
-          if (e.target.matches('.page-btn:not(.disabled)')) {
-            const url = e.target.dataset.url;
-            if (url) {
-              showLoading();
-              vscode.postMessage({
-                command: 'fetchPage',
-                url: url,
-                searchTerm: searchInput.value // Pass current search term
-              });
-            }
-          }
-        });
-
+        let searchTimeout;  
+        
         window.addEventListener('message', event => {
           const message = event.data;
           hideLoading();
@@ -807,6 +791,88 @@ function updateCapturedPokemonsPanelWithAll(
             }
           }
         });
+
+        const currentState = {
+          searchTerm: "${searchState.term}",
+          filter: "${searchState.filter}"
+        };
+
+        // Loading overlay
+        const loadingOverlay = document.querySelector('.loading-overlay');
+
+        function showLoading() {
+          loadingOverlay.classList.add('active');
+        }
+
+        function hideLoading() {
+          loadingOverlay.classList.remove('active');
+        }
+
+        // Search input
+        const searchInput = document.getElementById('searchInput');
+        const statusFilter = document.getElementById('statusFilter');
+        const clearButton = document.getElementById('clearSearch');
+
+
+        // Update clear button visibility
+        function updateClearButton() {
+          clearButton.classList.toggle('visible', searchInput.value.length > 0);
+        }
+
+        // Clear search and return to first page
+        clearButton.addEventListener('click', () => {
+          searchInput.value = '';
+          updateClearButton();
+          vscode.postMessage({
+            command: 'fetchPage',
+            url: 'https://pokeapi.co/api/v2/pokemon?offset=0&limit=20',
+            searchState: {
+              term: '',
+              filter: statusFilter.value
+            }
+          });
+        });
+
+        // Keep search term state when searching
+        searchInput.addEventListener('input', () => {
+          updateClearButton();
+          clearTimeout(searchTimeout);
+          
+          const searchTerm = searchInput.value;
+          
+          // Clear previous search timeout
+          if (searchTimeout) {
+            clearTimeout(searchTimeout);
+          }
+          
+          // Hide loading spinner if search term is too short
+          if (searchTerm.length < 2) {
+            hideLoading();
+            return;
+          }
+          
+          searchTimeout = setTimeout(() => {
+            const filter = statusFilter.value;
+            showLoading();
+            vscode.postMessage({
+              command: 'search',
+              searchTerm: searchTerm,
+              filter: filter,
+              searchState: {
+                term: searchTerm,
+                filter: filter
+              }
+            });
+          }, 300);
+        });
+
+
+        // Initial state
+        updateClearButton();
+
+        // Pagination
+        ${paginationScript}
+
       </script>
 
     </body>
