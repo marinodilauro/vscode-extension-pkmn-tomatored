@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { getRandomPokemon, getAllPokemon } from "./pkmnAPI";
+import { getRandomPokemon, getPokemonPage, searchPokemon } from "./pkmnAPI";
 import { PokemonViewProvider } from "./pokemonViewProvider";
 import { Pokemon } from "./pkmnAPI";
 
@@ -123,6 +123,7 @@ async function refreshPokemon() {
       name,
       sprites: { front_default: spriteUrl },
       message: undefined,
+      isGray: true,
     };
     vscode.window.showInformationMessage(`A wild ${name} appeared!`);
 
@@ -210,27 +211,28 @@ async function showCapturedPokemons() {
     // Show loading state
     updateLoadingState();
 
-    // Use cached data or fetch new
-    const allPokemon =
-      state.pokemonCache.length > 0
-        ? state.pokemonCache
-        : await getAllPokemon();
+    // Fetch first page
+    const { pokemon, pagination } = await getPokemonPage();
+    updateCapturedPokemonsPanelWithAll(pokemon, pagination);
 
-    // Cache for future use
-    if (state.pokemonCache.length === 0) {
-      state.pokemonCache = allPokemon;
-    }
-
-    // Update captured status
-    state.capturedPokemons.forEach((captured) => {
-      const pokemon = allPokemon.find((p) => p.name === captured.name);
-      if (pokemon) {
-        pokemon.isGray = false;
+    // Handle messages from webview
+    capturedPokemonsPanel.webview.onDidReceiveMessage(async (message) => {
+      try {
+        switch (message.command) {
+          case "fetchPage":
+            const { pokemon, pagination } = await getPokemonPage(message.url);
+            updateCapturedPokemonsPanelWithAll(pokemon, pagination);
+            break;
+          case "search":
+            const searchResults = await searchPokemon(message.searchTerm);
+            // Update panel with search results without pagination
+            updateCapturedPokemonsPanelWithAll(searchResults);
+            break;
+        }
+      } catch (error) {
+        vscode.window.showErrorMessage("Failed to handle request");
       }
     });
-
-    // Update panel content with all Pokemon
-    updateCapturedPokemonsPanelWithAll(allPokemon);
 
     capturedPokemonsPanel.onDidDispose(() => {
       capturedPokemonsPanel = undefined;
@@ -245,36 +247,203 @@ function updateLoadingState() {
   if (!capturedPokemonsPanel) {
     return;
   }
-
   capturedPokemonsPanel.webview.html = `
     <!DOCTYPE html>
     <html>
     <head>
       <style>
-        .loader {
+        body {
+          background-color: #1e1e1e;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          height: 100vh;
+          margin: 0;
+          font-family: Arial, sans-serif;
+        }
+
+        .loader-container {
           text-align: center;
-          padding: 20px;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          align-items: center;
         }
+
         .loading-text {
-          font-size: 1.2em;
+          font-size: 1.5em;
           color: white;
+          margin-bottom: 20px;
         }
+
+        .pokeball {
+          width: 60px;
+          height: 60px;
+          background-color: #fff;
+          border-radius: 50%;
+          position: relative;
+          animation: shake 1.25s cubic-bezier(0.36, 0.07, 0.19, 0.97) infinite;
+          transform: translate3d(0, 0, 0);
+        }
+
+        .pokeball::before {
+          content: "";
+          position: absolute;
+          transform: translate(-50%,0%);
+          width: 60px;
+          height: 30px;
+          background-color: #ff1c1c;
+          border-radius: 30px 30px 0 0;
+          top: 0;
+        }
+
+        .pokeball::after {
+          content: "";
+          position: absolute;
+          width: 20px;
+          height: 20px;
+          background-color: #fff;
+          border-radius: 50%;
+          top: 20px;
+          left: 20px;
+          border: 4px solid #000;
+          box-sizing: border-box;
+        }
+
+        @keyframes shake {
+          0% {
+            transform: translate3d(0, 0, 0) rotate(0);
+          }
+          20% {
+            transform: translate3d(-10px, 0, 0) rotate(-20deg);
+          }
+          30% {
+            transform: translate3d(10px, 0, 0) rotate(20deg);
+          }
+          50% {
+            transform: translate3d(-10px, 0, 0) rotate(-10deg);
+          }
+          60% {
+            transform: translate3d(10px, 0, 0) rotate(10deg);
+          }
+          100% {
+            transform: translate3d(0, 0, 0) rotate(0);
+          }
+        }
+
+        .dots {
+          display: inline-block;
+          width: 20px;
+          text-align: left;
+        }
+
+        @keyframes dots {
+          0%,
+          20% {
+            content: ".";
+          }
+          40% {
+            content: "..";
+          }
+          60%,
+          100% {
+            content: "...";
+          }
+        }
+
+        .dots::after {
+          content: "...";
+          animation: dots 1.5s steps(1, end) infinite;
+        }
+
       </style>
     </head>
     <body>
-      <div class="loader">
-        <h2 class="loading-text">Loading Pokédex...</h2>
+      <div class="loader-container">
+        <h2 class="loading-text">Loading Pokédex<span class="dots"></span></h2>
+        <div class="pokeball"></div>
       </div>
     </body>
     </html>
   `;
 }
 
+function generatePageNumbers(currentPage: number, totalPages: number): string {
+  const pages = [];
+  const showPages = 10;
+  let start = Math.max(1, currentPage - Math.floor(showPages / 2));
+  let end = Math.min(totalPages, start + showPages - 1);
+
+  if (end - start + 1 < showPages) {
+    start = Math.max(1, end - showPages + 1);
+  }
+
+  // First page button
+  const firstPageBtn = `
+    <button class="page-btn ${currentPage === 1 ? "disabled" : ""}" 
+            data-url="https://pokeapi.co/api/v2/pokemon?offset=0&limit=20"
+            title="Go to first page">
+      «
+    </button>
+  `;
+
+  // Last page button
+  const lastPageBtn = `
+    <button class="page-btn ${currentPage === totalPages ? "disabled" : ""}" 
+            data-url="https://pokeapi.co/api/v2/pokemon?offset=${
+              (totalPages - 1) * 20
+            }&limit=20"
+            title="Go to last page">
+      »
+    </button>
+  `;
+
+  for (let i = start; i <= end; i++) {
+    pages.push(`
+      <button class="page-btn ${i === currentPage ? "active" : ""}" 
+              data-url="https://pokeapi.co/api/v2/pokemon?offset=${
+                (i - 1) * 20
+              }&limit=20">
+        ${i}
+      </button>
+    `);
+  }
+
+  return firstPageBtn + pages.join("") + lastPageBtn;
+}
+
 // Function to update panel with all Pokemon
-function updateCapturedPokemonsPanelWithAll(pokemonList: Pokemon[]) {
+function updateCapturedPokemonsPanelWithAll(
+  pokemonList: Pokemon[],
+  pagination?: any,
+  searchTerm?: string
+) {
   if (!capturedPokemonsPanel) {
     return;
   }
+
+  // Pagination controls
+  const paginationHTML = pagination
+    ? `
+    <div class="pagination">
+      <button class="page-btn ${!pagination.previous ? "disabled" : ""}" 
+              data-url="${pagination.previous || ""}"
+              ${!pagination.previous ? "disabled" : ""}>
+        Previous
+      </button>
+      
+      <div class="page-numbers">
+        ${generatePageNumbers(pagination.currentPage, pagination.totalPages)}
+      </div>
+
+      <button class="page-btn ${!pagination.next ? "disabled" : ""}" 
+              data-url="${pagination.next || ""}"
+              ${!pagination.next ? "disabled" : ""}>
+        Next
+      </button>
+    </div>
+    `
+    : "";
 
   capturedPokemonsPanel.webview.html = `
     <!DOCTYPE html>
@@ -386,10 +555,15 @@ function updateCapturedPokemonsPanelWithAll(pokemonList: Pokemon[]) {
           padding: 4px;
           display: none;
           font-size: 1.2em;
+          transition: color 0.2s;
         }
 
         .clear-search:hover {
           color: #64748b;
+        }
+
+        .clear-search.visible {
+          display: block;
         }
 
         .search-box:focus {
@@ -409,6 +583,82 @@ function updateCapturedPokemonsPanelWithAll(pokemonList: Pokemon[]) {
           display: none !important;
         }
 
+        .pagination {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 10px;
+          margin: 20px 0;
+        }
+
+        .page-numbers {
+          display: flex;
+          gap: 5px;
+        }
+
+        .page-btn {
+          padding: 8px 16px;
+          border: none;
+          border-radius: 4px;
+          background: #4a90e2;
+          color: white;
+          cursor: pointer;
+          min-width: 40px;
+          transition: background-color 0.2s, transform 0.1s;
+        }
+
+        .page-btn:hover:not(.disabled) {
+          background: #357abd;
+          transform: translateY(-1px);
+        }
+
+        .page-btn.disabled {
+          background: #cccccc;
+          cursor: not-allowed;
+          opacity: 0.7;
+        }
+
+        .page-btn.active {
+          background: #2c3e50;
+          font-weight: bold;
+        }
+
+        .page-btn[title^="Go to"] {
+          font-weight: bold;
+          padding: 8px 12px;
+        }
+
+        .loading-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.7);
+          display: none;
+          justify-content: center;
+          align-items: center;
+          z-index: 1000;
+        }
+
+        .loading-overlay.active {
+          display: flex;
+        }
+
+        .loading-spinner {
+          width: 50px;
+          height: 50px;
+          border: 5px solid #f3f3f3;
+          border-top: 5px solid #3498db;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(10px); }
           to { opacity: 1; transform: translateY(0); }
@@ -416,6 +666,10 @@ function updateCapturedPokemonsPanelWithAll(pokemonList: Pokemon[]) {
       </style>
     </head>
     <body>
+      <div class="loading-overlay">
+        <div class="loading-spinner"></div>
+      </div>
+
       <h1>🏆 Pokédex</h1>
 
       <div class="controls">
@@ -425,8 +679,11 @@ function updateCapturedPokemonsPanelWithAll(pokemonList: Pokemon[]) {
             class="search-box" 
             placeholder="Search Pokémon..." 
             id="searchInput"
+            value="${searchTerm || ""}" // Persist search term
           >
-          <button class="clear-search" id="clearSearch">✕</button>
+          <button class="clear-search ${
+            searchTerm ? "visible" : ""
+          }" id="clearSearch">✕</button>
         </div>
         <select class="filter-select" id="statusFilter">
           <option value="all">All Pokémon</option>
@@ -452,15 +709,91 @@ function updateCapturedPokemonsPanelWithAll(pokemonList: Pokemon[]) {
                   class="pokemon-name ${pokemon.isGray ? "gray" : ""}">
               ${formatPokemonName(pokemon.name)}
             </span>
-          </div>
-        `
+            </div>`
           )
           .join("")}
-      </div>       
+          
+        </div>       
+        ${paginationHTML}
 
       <script>
+        const vscode = acquireVsCodeApi();
+        const searchInput = document.getElementById('searchInput');
+        const statusFilter = document.getElementById('statusFilter');
+        const clearButton = document.getElementById('clearSearch');
+        const loadingOverlay = document.querySelector('.loading-overlay');
+        let searchTimeout;
+
+        function showLoading() {
+          loadingOverlay.classList.add('active');
+        }
+
+        function hideLoading() {
+          loadingOverlay.classList.remove('active');
+        }
+
+        function updateClearButton() {
+          clearButton.style.display = searchInput.value ? 'block' : 'none';
+        }
+
+        async function handleSearch() {
+          const searchTerm = searchInput.value.toLowerCase();
+          const filterValue = statusFilter.value;
+          
+          if (searchTerm.length >= 2) {
+            showLoading();
+            vscode.postMessage({
+              command: 'search',
+              searchTerm: searchTerm,
+              filter: filterValue
+            });
+          } else if (searchTerm.length === 0) {
+            showLoading();
+            vscode.postMessage({
+              command: 'fetchPage',
+              url: 'https://pokeapi.co/api/v2/pokemon?offset=0&limit=20'
+            });
+          }
+        }
+
+        searchInput.addEventListener('input', () => {
+          updateClearButton();
+          clearTimeout(searchTimeout);
+          searchTimeout = setTimeout(handleSearch, 300);
+        });
+
+        clearButton.addEventListener('click', () => {
+          searchInput.value = '';
+          updateClearButton();
+          vscode.postMessage({
+            command: 'fetchPage',
+            url: 'https://pokeapi.co/api/v2/pokemon?offset=0&limit=20'
+          });
+        });
+
+        statusFilter.addEventListener('change', handleSearch);
+
+        // Initial state
+        updateClearButton();
+
+        // Pagination
+        document.addEventListener('click', async (e) => {
+          if (e.target.matches('.page-btn:not(.disabled)')) {
+            const url = e.target.dataset.url;
+            if (url) {
+              showLoading();
+              vscode.postMessage({
+                command: 'fetchPage',
+                url: url,
+                searchTerm: searchInput.value // Pass current search term
+              });
+            }
+          }
+        });
+
         window.addEventListener('message', event => {
           const message = event.data;
+          hideLoading();
           if (message.command === 'updatePokemon') { 
             const card = document.getElementById(message.pokemonName + '-card');
             const sprite = document.getElementById(message.pokemonName + '-sprite');
@@ -474,38 +807,6 @@ function updateCapturedPokemonsPanelWithAll(pokemonList: Pokemon[]) {
             }
           }
         });
-
-        // Search and filter functionality
-        const searchInput = document.getElementById('searchInput');
-        const statusFilter = document.getElementById('statusFilter');
-        const pokemonCards = document.querySelectorAll('.pokemon-card');
-        const clearButton = document.getElementById('clearSearch');
-        
-        function updateClearButton() {
-          clearButton.style.display = searchInput.value ? 'block' : 'none';
-        }
-
-        function filterPokemon() {
-          const searchTerm = searchInput.value.toLowerCase();
-          const filterValue = statusFilter.value;
-
-          pokemonCards.forEach(card => {
-            const name = card.dataset.name;
-            const status = card.dataset.status;
-            const matchesSearch = name.startsWith(searchTerm);
-            const matchesFilter = filterValue === 'all' || status === filterValue;
-
-            card.classList.toggle('hidden', !matchesSearch || !matchesFilter);
-          });
-        }
-
-        clearButton.addEventListener('click', () => {searchInput.value = ''; updateClearButton(); filterPokemon();});
-        searchInput.addEventListener('input', () => {updateClearButton(); filterPokemon();});
-        searchInput.addEventListener('input', filterPokemon);
-        statusFilter.addEventListener('change', filterPokemon);
-
-        // Initial state
-        updateClearButton();
       </script>
 
     </body>
@@ -916,6 +1217,7 @@ export async function spawnPokemonForBreak() {
       name,
       sprites: { front_default: spriteUrl },
       message: undefined,
+      isGray: true,
     };
     state.pokemonRunAway = false;
     pokemonViewProvider.refresh();
@@ -933,7 +1235,7 @@ export async function spawnPokemonForBreak() {
     // Create a new message
     currentPokemonMessage = await vscode.window.showInformationMessage(
       `⭐ A wild ${formatPokemonName(
-        state.currentPokemon.name
+        state.currentPokemon!.name
       )} appeared! You can try to catch it during your ${
         TEST_MODE ? "10 seconds" : "5 minutes"
       } break! ⭐`,
