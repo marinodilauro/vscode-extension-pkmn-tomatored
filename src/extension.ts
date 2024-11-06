@@ -9,7 +9,6 @@ const SHORT_BREAK = 5 * 60;
 const LONG_BREAK = 15 * 60;
 const TEST_MODE = true; // Set to true for testing with shorter timers
 
-// Pomodoro state
 interface PomodoroState {
   isRunning: boolean;
   currentInterval: NodeJS.Timeout | undefined;
@@ -19,6 +18,7 @@ interface PomodoroState {
   currentPhase: "work" | "shortBreak" | "longBreak";
   currentPokemon?: Pokemon;
   capturedPokemons: Pokemon[];
+  capturedPokemonNames: Set<string>;
   justCaptured?: string;
   timeLeft: number;
   pokemonRunAway: boolean;
@@ -26,6 +26,10 @@ interface PomodoroState {
   pokemonCache: Pokemon[];
 }
 
+/**
+ * Global state object for managing Pomodoro and Pokemon state
+ * @type {PomodoroState}
+ */
 export const state: PomodoroState = {
   isRunning: false,
   currentInterval: undefined,
@@ -35,6 +39,7 @@ export const state: PomodoroState = {
   currentPhase: "work",
   currentPokemon: undefined,
   capturedPokemons: [],
+  capturedPokemonNames: new Set(),
   justCaptured: undefined,
   timeLeft: 0,
   pokemonRunAway: false,
@@ -49,7 +54,13 @@ let currentPokemonMessage: vscode.MessageItem | undefined;
 let pokemonViewProvider: PokemonViewProvider;
 let capturedPokemonsPanel: vscode.WebviewPanel | undefined;
 
-export function activate(context: vscode.ExtensionContext) {
+/**
+ * Activates the extension
+ * @param {vscode.ExtensionContext} context - The extension context provided by VS Code
+ * @returns {void}
+ * @throws {Error} When extension activation fails
+ */
+export function activate(context: vscode.ExtensionContext): void {
   console.log("activate function called");
 
   pokemonViewProvider = new PokemonViewProvider(context.extensionUri);
@@ -111,8 +122,13 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(startPomodoro, stopPomodoro, ...viewCommands);
 }
 
-// Command to refresh the view and spawn another Pokémon
-async function refreshPokemon() {
+/**
+ * Refreshes the current Pokemon with a new random Pokemon
+ * @returns {Promise<void>}
+ * @throws {Error} If Pokemon fetch fails or view provider is not initialized
+ * @private
+ */
+async function refreshPokemon(): Promise<void> {
   try {
     const { name, spriteUrl } = await getRandomPokemon();
     if (!name || !spriteUrl) {
@@ -138,8 +154,13 @@ async function refreshPokemon() {
   }
 }
 
-// //Command to catch the Pokémon
-function capturePokemon() {
+/**
+ * Captures the current Pokemon and updates relevant state
+ * @returns {void}
+ * @throws {Error} If Pokemon capture fails or view provider is not initialized
+ * @private
+ */
+function capturePokemon(): void {
   // Validate state and pokemon existence
   if (!state || !state.currentPokemon) {
     vscode.window.showErrorMessage("No Pokemon available to capture!");
@@ -155,6 +176,7 @@ function capturePokemon() {
   try {
     // Update state
     state.capturedPokemons.push(pokemon);
+    state.capturedPokemonNames.add(pokemon.name);
     state.justCaptured = capturedName;
     state.currentPokemon = undefined;
 
@@ -188,8 +210,12 @@ function capturePokemon() {
   }
 }
 
-// Update showCapturedPokemons function
-async function showCapturedPokemons() {
+/**
+ * Shows the captured Pokemons panel
+ * @returns {Promise<void>}
+ * @throws {Error} If panel creation or Pokemon list loading fails
+ */
+async function showCapturedPokemons(): Promise<void> {
   if (capturedPokemonsPanel) {
     // If panel exists, show it
     capturedPokemonsPanel.reveal();
@@ -240,6 +266,36 @@ async function showCapturedPokemons() {
               searchState
             );
             break;
+          case "filter":
+            const filteredResults = await getPokemonPage(message.currentUrl);
+            const filteredPokemon = filteredResults.pokemon.filter(
+              (pokemon) => {
+                switch (message.filter) {
+                  case "captured":
+                    return state.capturedPokemonNames.has(pokemon.name);
+                  case "uncaptured":
+                    return !state.capturedPokemonNames.has(pokemon.name);
+                  default:
+                    return true; // 'all' case
+                }
+              }
+            );
+            updateCapturedPokemonsPanelWithAll(
+              filteredPokemon,
+              filteredResults.pagination,
+              searchState
+            );
+            break;
+          case "updatePokemon":
+            const currentPageData = await getPokemonPage(
+              message.currentUrl || undefined
+            );
+            updateCapturedPokemonsPanelWithAll(
+              currentPageData.pokemon,
+              currentPageData.pagination,
+              searchState
+            );
+            break;
         }
       } catch (error) {
         vscode.window.showErrorMessage("Failed to handle request");
@@ -254,8 +310,12 @@ async function showCapturedPokemons() {
   }
 }
 
-// Loading state function
-function updateLoadingState() {
+/**
+ * Updates the loading state of the captured Pokemons panel
+ * @returns {void}
+ * @private
+ */
+function updateLoadingState(): void {
   if (!capturedPokemonsPanel) {
     return;
   }
@@ -380,6 +440,13 @@ function updateLoadingState() {
   `;
 }
 
+/**
+ * Generates pagination numbers for the Pokemon list
+ * @param {number} currentPage - Current page number
+ * @param {number} totalPages - Total number of pages
+ * @returns {string} HTML string containing pagination buttons
+ * @private
+ */
 function generatePageNumbers(currentPage: number, totalPages: number): string {
   const pages = [];
   const showPages = 10;
@@ -424,15 +491,24 @@ function generatePageNumbers(currentPage: number, totalPages: number): string {
   return firstPageBtn + pages.join("") + lastPageBtn;
 }
 
-// Function to update panel with all Pokemon
+/**
+ * Updates the captured Pokemons panel with all Pokemon data
+ * @param {Pokemon[]} pokemonList - List of Pokemon to display
+ * @param {Object} [pagination] - Pagination information
+ * @param {Object} [searchState] - Current search state
+ * @param {string} [searchState.term] - Search term
+ * @param {string} [searchState.filter] - Filter type
+ * @returns {void}
+ * @private
+ */
 function updateCapturedPokemonsPanelWithAll(
   pokemonList: Pokemon[],
   pagination?: any,
-  searchState = {
+  searchState: { term?: string; filter?: string } = {
     term: "",
     filter: "all",
   }
-) {
+): void {
   if (!capturedPokemonsPanel) {
     return;
   }
@@ -441,40 +517,45 @@ function updateCapturedPokemonsPanelWithAll(
   const filterValue = searchState?.filter || "all";
 
   // Pagination controls
-  const paginationHTML = pagination
-    ? `
-    <div class="pagination">
-      <button class="page-btn ${!pagination.previous ? "disabled" : ""}" 
-              data-url="search?term=${searchState.term}&page=${
-        pagination.currentPage - 1
-      }"
-              ${!pagination.previous ? "disabled" : ""}>
-        Previous
-      </button>
-      
-      <div class="page-numbers">
-        ${generatePageNumbers(pagination.currentPage, pagination.totalPages)}
-      </div>
+  const paginationHTML =
+    filterValue !== "captured" && pagination
+      ? `
+      <div class="pagination">
+        <button class="page-btn ${!pagination.previous ? "disabled" : ""}" 
+                data-url="https://pokeapi.co/api/v2/pokemon?offset=${
+                  (pagination.currentPage - 2) * 20
+                }&limit=20"
+                ${!pagination.previous ? "disabled" : ""}>
+          Previous
+        </button>
+        
+        <div class="page-numbers">
+          ${generatePageNumbers(pagination.currentPage, pagination.totalPages)}
+        </div>
 
-      <button class="page-btn ${!pagination.next ? "disabled" : ""}" 
-              data-url="search?term=${searchState.term}&page=${
-        pagination.currentPage + 1
-      }"
-              ${!pagination.next ? "disabled" : ""}>
-        Next
-      </button>
-    </div>
-    `
-    : "";
+        <button class="page-btn ${!pagination.next ? "disabled" : ""}" 
+                data-url="https://pokeapi.co/api/v2/pokemon?offset=${
+                  pagination.currentPage * 20
+                }&limit=20"
+                ${!pagination.next ? "disabled" : ""}>
+          Next
+        </button>
+      </div>`
+      : "";
 
-  // Add event listener for pagination in the script section
+  // When filter is "captured", show all captured Pokemon
+  const displayedPokemon =
+    filterValue === "captured" ? state.capturedPokemons : pokemonList;
+
   const paginationScript = `
-      document.addEventListener('click', (e) => {
-        if (e.target.matches('.page-btn:not(.disabled)')) {
-          const url = e.target.dataset.url;
-          if (url && url.startsWith('search')) {
+    document.addEventListener('click', (e) => {
+      if (e.target.matches('.page-btn:not(.disabled)')) {
+        const url = e.target.dataset.url;
+        if (url) {
+          showLoading();
+          
+          if (url.startsWith('search')) {
             const params = new URLSearchParams(url.split('?')[1]);
-            showLoading();
             vscode.postMessage({
               command: 'search',
               searchTerm: params.get('term'),
@@ -485,9 +566,165 @@ function updateCapturedPokemonsPanelWithAll(
                 filter: statusFilter.value
               }
             });
+          } else {
+            // Handle both numbered pages and Next/Previous
+            vscode.postMessage({
+              command: 'fetchPage',
+              url: url,
+              searchState: {
+                term: searchInput.value,
+                filter: statusFilter.value
+              }
+            });
           }
         }
+      }
+    });
+  `;
+
+  const updatePokemonScript = `
+    function updatePokemonCard(pokemonName) {
+      console.log('Looking for pokemon:', pokemonName);
+
+      const card = document.querySelector(\`[data-pokemon-name="\${pokemonName}"]\`);
+      
+      if (card) {
+        // Update card when found
+        card.classList.add('captured');
+        card.dataset.status = 'captured';
+        
+        const sprite = card.querySelector('.pokemon-sprite');
+        if (sprite) sprite.classList.remove('gray');
+        
+        const name = card.querySelector('.pokemon-name');
+        if (name) name.classList.remove('gray');
+        
+        console.log('Successfully updated card for:', pokemonName);
+      }
+      
+    }
+
+    window.addEventListener('message', event => {
+      const message = event.data;
+      console.log('Received update message:', message);
+      
+      if (message.command === 'updatePokemon') {
+        updatePokemonCard(message.pokemonName);
+      }
+    });
+  `;
+
+  const searchScript = ` 
+    // Search input
+    const searchInput = document.getElementById('searchInput');
+    const statusFilter = document.getElementById('statusFilter');
+    const clearButton = document.getElementById('clearSearch');
+
+
+    // Update clear button visibility
+    function updateClearButton() {
+      clearButton.classList.toggle('visible', searchInput.value.length > 0);
+    }
+
+    // Clear search and return to first page
+    clearButton.addEventListener('click', () => {
+      searchInput.value = '';
+      updateClearButton();
+      vscode.postMessage({
+        command: 'fetchPage',
+        url: 'https://pokeapi.co/api/v2/pokemon?offset=0&limit=20',
+        searchState: {
+          term: '',
+          filter: statusFilter.value
+        }
       });
+    });
+
+    // Keep search term state when searching
+    searchInput.addEventListener('input', () => {
+      updateClearButton();
+      clearTimeout(searchTimeout);
+      
+      const searchTerm = searchInput.value;
+      
+      // Clear previous search timeout
+      if (searchTimeout) {
+        clearTimeout(searchTimeout);
+      }
+      
+      // Hide loading spinner if search term is too short
+      if (searchTerm.length < 2) {
+        hideLoading();
+        return;
+      }
+      
+      searchTimeout = setTimeout(() => {
+        const filter = statusFilter.value;
+        showLoading();
+        vscode.postMessage({
+          command: 'search',
+          searchTerm: searchTerm,
+          filter: filter,
+          searchState: {
+            term: searchTerm,
+            filter: filter
+          }
+        });
+      }, 300);
+    });
+  `;
+
+  const filterScript = ` 
+    let currentUrl = 'https://pokeapi.co/api/v2/pokemon?offset=0&limit=20';
+    statusFilter.addEventListener('change', () => {
+      const filter = statusFilter.value;
+      const searchTerm = searchInput.value;
+      
+      vscode.postMessage({
+        command: 'filter',
+        filter: filter,
+        currentUrl: currentUrl,
+        searchState: {
+          term: searchInput.value,
+          filter: filter
+        }
+      });
+    });
+
+    // Add filter functionality
+  function filterPokemon() {
+    const filter = statusFilter.value;
+    const cards = document.querySelectorAll('.pokemon-card');
+    const capturedPokemon = [];
+    
+    cards.forEach(card => {
+      switch(filter) {
+        case 'captured':
+          if (card.dataset.status === 'captured') {
+            capturedPokemon.push(card.dataset.pokemonName);
+            card.style.display = '';
+          } else {
+            card.style.display = 'none';
+          }
+          break;
+        case 'uncaptured':
+          card.style.display = card.dataset.status === 'uncaptured' ? '' : 'none';
+          break;
+        default: // 'all'
+          card.style.display = '';
+      }
+    });
+
+    // Log captured Pokemon when that filter is selected
+    if (filter === 'captured') {
+      console.log('Captured Pokemon:', capturedPokemon);
+      console.log('Total captured:', capturedPokemon.length);
+    }
+  }
+
+    // Add initial filter
+    filterPokemon();
+
   `;
 
   capturedPokemonsPanel.webview.html = `
@@ -746,60 +983,48 @@ function updateCapturedPokemonsPanelWithAll(
       </div>
 
       <div class="pokemon-list">
-        ${pokemonList
+        ${displayedPokemon
           .map(
             (pokemon) => `
-          <div id="${pokemon.name}-card" 
-               class="pokemon-card ${pokemon.isGray ? "" : "captured"}"
-               data-name="${pokemon.name}"
-               data-status="${pokemon.isGray ? "uncaptured" : "captured"}">
-            <img id="${pokemon.name}-sprite" 
-                 class="pokemon-sprite ${pokemon.isGray ? "gray" : ""}" 
-                 loading="lazy"
-                 src="${pokemon.sprites.front_default}" 
-                 alt="${formatPokemonName(pokemon.name)}">
-            <span id="${pokemon.name}-name" 
-                  class="pokemon-name ${pokemon.isGray ? "gray" : ""}">
-              ${formatPokemonName(pokemon.name)}
-            </span>
+            <div class="pokemon-card ${
+              state.capturedPokemonNames.has(pokemon.name) ? "captured" : ""
+            }"
+                data-pokemon-name="${pokemon.name}"
+                data-status="${
+                  state.capturedPokemonNames.has(pokemon.name)
+                    ? "captured"
+                    : "uncaptured"
+                }">
+              <img class="pokemon-sprite ${
+                state.capturedPokemonNames.has(pokemon.name) ? "" : "gray"
+              }" 
+                  loading="lazy"
+                  src="${pokemon.sprites.front_default}" 
+                  alt="${formatPokemonName(pokemon.name)}">
+              <span class="pokemon-name ${
+                state.capturedPokemonNames.has(pokemon.name) ? "" : "gray"
+              }">
+                ${formatPokemonName(pokemon.name)}
+              </span>
             </div>`
           )
-          .join("")}
-          
-        </div>       
+          .join("")} 
+        </div>    
+
         ${paginationHTML}
 
       <script>
         const vscode = acquireVsCodeApi();
-
-
         let searchTimeout;  
         
-        window.addEventListener('message', event => {
-          const message = event.data;
-          hideLoading();
-          if (message.command === 'updatePokemon') { 
-            const card = document.getElementById(message.pokemonName + '-card');
-            const sprite = document.getElementById(message.pokemonName + '-sprite');
-            const name = document.getElementById(message.pokemonName + '-name');
-            
-            if (card && sprite && name) {
-              card.classList.add('captured');
-              card.dataset.status = 'captured';
-              sprite.classList.remove('gray');
-              name.classList.remove('gray');
-            }
-          }
-        });
-
         const currentState = {
           searchTerm: "${searchState.term}",
           filter: "${searchState.filter}"
         };
-
+        
         // Loading overlay
         const loadingOverlay = document.querySelector('.loading-overlay');
-
+        
         function showLoading() {
           loadingOverlay.classList.add('active');
         }
@@ -808,70 +1033,21 @@ function updateCapturedPokemonsPanelWithAll(
           loadingOverlay.classList.remove('active');
         }
 
-        // Search input
-        const searchInput = document.getElementById('searchInput');
-        const statusFilter = document.getElementById('statusFilter');
-        const clearButton = document.getElementById('clearSearch');
-
-
-        // Update clear button visibility
-        function updateClearButton() {
-          clearButton.classList.toggle('visible', searchInput.value.length > 0);
-        }
-
-        // Clear search and return to first page
-        clearButton.addEventListener('click', () => {
-          searchInput.value = '';
-          updateClearButton();
-          vscode.postMessage({
-            command: 'fetchPage',
-            url: 'https://pokeapi.co/api/v2/pokemon?offset=0&limit=20',
-            searchState: {
-              term: '',
-              filter: statusFilter.value
-            }
-          });
-        });
-
-        // Keep search term state when searching
-        searchInput.addEventListener('input', () => {
-          updateClearButton();
-          clearTimeout(searchTimeout);
-          
-          const searchTerm = searchInput.value;
-          
-          // Clear previous search timeout
-          if (searchTimeout) {
-            clearTimeout(searchTimeout);
-          }
-          
-          // Hide loading spinner if search term is too short
-          if (searchTerm.length < 2) {
-            hideLoading();
-            return;
-          }
-          
-          searchTimeout = setTimeout(() => {
-            const filter = statusFilter.value;
-            showLoading();
-            vscode.postMessage({
-              command: 'search',
-              searchTerm: searchTerm,
-              filter: filter,
-              searchState: {
-                term: searchTerm,
-                filter: filter
-              }
-            });
-          }, 300);
-        });
-
+        
+        // Search script
+        ${searchScript}
+        
+        // Filter script
+        ${filterScript}
+        
+        // Update Pokemon card on capture
+        ${updatePokemonScript}
+        
+        // Pagination
+        ${paginationScript}
 
         // Initial state
         updateClearButton();
-
-        // Pagination
-        ${paginationScript}
 
       </script>
 
@@ -880,7 +1056,12 @@ function updateCapturedPokemonsPanelWithAll(
   `;
 }
 
-function startWorkSession() {
+/**
+ * Starts a work session in the Pomodoro timer
+ * @returns {void}
+ * @private
+ */
+function startWorkSession(): void {
   state.currentPhase = "work";
   state.pomodoroCount++; // Hide previous Pokémon messages
   const duration = TEST_MODE ? 5 : WORK_DURATION; // 1 minute in test mode
@@ -903,7 +1084,12 @@ function startWorkSession() {
   );
 }
 
-async function startShortBreak() {
+/**
+ * Starts a short break session in the Pomodoro timer
+ * @returns {Promise<void>}
+ * @private
+ */
+async function startShortBreak(): Promise<void> {
   state.currentPhase = "shortBreak";
   state.shortBreakCount++;
 
@@ -917,7 +1103,12 @@ async function startShortBreak() {
   startTimer(duration);
 }
 
-async function startLongBreak() {
+/**
+ * Starts a long break session in the Pomodoro timer
+ * @returns {Promise<void>}
+ * @private
+ */
+async function startLongBreak(): Promise<void> {
   state.currentPhase = "longBreak";
   state.longBreakCount++;
 
@@ -935,7 +1126,13 @@ async function startLongBreak() {
   );
 }
 
-function startTimer(duration: number) {
+/**
+ * Starts the timer for a given duration
+ * @param {number} duration - Duration in seconds
+ * @returns {void}
+ * @private
+ */
+function startTimer(duration: number): void {
   let timeLeft = duration;
   state.timeLeft = timeLeft;
 
@@ -989,12 +1186,40 @@ function startTimer(duration: number) {
   }, 1000);
 }
 
+/**
+ * Stops the Pomodoro timer and resets all states
+ * @returns {void}
+ * @private
+ */
+function stopTimer(): void {
+  if (state.currentInterval) {
+    clearInterval(state.currentInterval);
+    state.currentInterval = undefined;
+  }
+  state.isRunning = false;
+  state.pomodoroCount = 0;
+  state.shortBreakCount = 0;
+  state.currentPhase = "work";
+  state.currentPokemon = undefined;
+  vscode.window.setStatusBarMessage("");
+}
+
+/**
+ * Formats time remaining into MM:SS format
+ * @param {number} seconds - Number of seconds
+ * @returns {string} Formatted time string
+ */
 function formatTimeRemaining(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
   return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 }
 
+/**
+ * Formats Pokemon name with first letter capitalized
+ * @param {string} pokemonName - Name of the Pokemon
+ * @returns {string} Formatted Pokemon name
+ */
 function formatPokemonName(pokemonName: string): string {
   const formattedName =
     pokemonName.charAt(0).toUpperCase() + pokemonName.slice(1);
@@ -1002,6 +1227,11 @@ function formatPokemonName(pokemonName: string): string {
   return formattedName;
 }
 
+/**
+ * Gets the current view content for the webview
+ * @param {vscode.Webview} webview - VS Code webview instance
+ * @returns {string} HTML content for the webview
+ */
 // Get the current view content
 export function getCurrentViewContent(webview: vscode.Webview): string {
   let content;
@@ -1215,26 +1445,24 @@ export function getCurrentViewContent(webview: vscode.Webview): string {
   `;
 }
 
-function stopTimer() {
-  if (state.currentInterval) {
-    clearInterval(state.currentInterval);
-    state.currentInterval = undefined;
-  }
-  state.isRunning = false;
-  state.pomodoroCount = 0;
-  state.shortBreakCount = 0;
-  state.currentPhase = "work";
-  state.currentPokemon = undefined;
-  vscode.window.setStatusBarMessage("");
-}
-
-function resetCounters() {
+/**
+ * Resets all counters in the Pomodoro state
+ * @returns {void}
+ * @private
+ */
+function resetCounters(): void {
   state.pomodoroCount = 0;
   state.shortBreakCount = 0;
   state.pokemonRunAway = false;
 }
 
-function updateStatusBar(timeLeft: number) {
+/**
+ * Updates the VS Code status bar with current timer information
+ * @param {number} timeLeft - Time remaining in seconds
+ * @returns {void}
+ * @private
+ */
+function updateStatusBar(timeLeft: number): void {
   let statusText = "";
   const sessionCount =
     state.currentPhase === "work"
@@ -1275,7 +1503,12 @@ function updateStatusBar(timeLeft: number) {
   vscode.window.setStatusBarMessage(statusText);
 }
 
-export async function spawnPokemonForBreak() {
+/**
+ * Spawns a random Pokemon during break sessions
+ * @returns {Promise<void>}
+ * @throws {Error} If Pokemon fetching fails
+ */
+export async function spawnPokemonForBreak(): Promise<void> {
   try {
     const { name, spriteUrl } = await getRandomPokemon();
     console.log(`Spawned Pokémon: ${name}, Sprite URL: ${spriteUrl}`);
@@ -1314,6 +1547,10 @@ export async function spawnPokemonForBreak() {
   }
 }
 
-export function deactivate() {
+/**
+ * Deactivates the extension and cleans up resources
+ * @returns {void}
+ */
+export function deactivate(): void {
   stopTimer();
 }
