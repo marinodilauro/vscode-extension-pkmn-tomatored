@@ -1,6 +1,6 @@
 # 🎮 Pokémon TomatoRed 🍅
 
-## A Gamified Pomodoro Timer
+## Gamified Pomodoro Timer
 Combine the productivity of the Pomodoro Technique with the fun of catching Pokémon! This VS Code extension helps you stay focused while giving you a chance to build your Pokémon collection during breaks.
 
 ## ✨ Features
