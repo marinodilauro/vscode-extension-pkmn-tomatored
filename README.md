@@ -1,4 +1,4 @@
-# <img src="./src/resources/pokeball_color.svg" alt="Pokéball icon" width="24" height="24"> Pokémon TomatoRed - A Gamified Pomodoro Timer ⏲️
+# 🎮 Pokémon TomatoRed - <span style="font-size: 0.8em;">A Gamified Pomodoro Timer</span> 🍅
 
 Combine the productivity of the Pomodoro Technique with the fun of catching Pokémon! This VS Code extension helps you stay focused while giving you a chance to build your Pokémon collection during breaks.
 
