@@ -13,7 +13,7 @@ Combine the productivity of the Pomodoro Technique with the fun of catching Pok�
 
 - ⚡ **Pokémon Integration**:
   - Wild Pokémon appear in the sidebar view during break sessions
-  - A dedicated Pokémon view in the Activity Bar (look for the <img src="./src/resources/pokeball.svg" alt="Pokéball icon" width="16" height="16"> Pokéball icon)
+  - A dedicated Pokémon view in the Activity Bar (look for the <img src="./src/resources/pokeball_light.svg" alt="Pokéball icon" width="16" height="16"> Pokéball icon)
   - Catch Pokémon during your breaks
   - Build your collection in the Pokédex
 
