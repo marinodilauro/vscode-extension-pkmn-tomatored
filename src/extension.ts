@@ -1521,6 +1521,11 @@ export async function spawnPokemonForBreak(): Promise<void> {
     state.pokemonRunAway = false;
     pokemonViewProvider.refresh();
 
+    // Focus the sidebar view
+    await vscode.commands.executeCommand(
+      "workbench.view.extension.pokemon-tomatoRed-container"
+    );
+
     // Bring the Pokemon view to front
     await vscode.commands.executeCommand(
       "workbench.view.extension.pokemon-tomatoRed-container"
@@ -1530,18 +1535,6 @@ export async function spawnPokemonForBreak(): Promise<void> {
     if (pokemonViewProvider._view) {
       pokemonViewProvider._view.show(true); // true means preserve focus
     }
-
-    // Create a new message
-    currentPokemonMessage = await vscode.window.showInformationMessage(
-      `⭐ A wild ${formatPokemonName(
-        state.currentPokemon!.name
-      )} appeared! You can try to catch it during your ${
-        TEST_MODE ? "10 seconds" : "5 minutes"
-      } break! ⭐`,
-      { modal: false },
-      { title: "Catch" }, // MessageItem for catching the Pokémon
-      { title: "Run" } // MessageItem for running away
-    );
   } catch (error) {
     vscode.window.showErrorMessage("Failed to fetch a Pokémon.");
   }
